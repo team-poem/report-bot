@@ -81,6 +81,7 @@
       const resp = await fetch('/jobs', { method: 'POST', body: fd });
       if (!resp.ok) { statusEl.textContent = '업로드 실패'; statusEl.className = 'status err'; return; }
       const { job_id } = await resp.json();
+      statusEl.textContent = '대기 중 — 분석 차례를 기다리는 중…';
 
       const es = new EventSource(`/jobs/${job_id}/events`);
       es.onmessage = async (ev) => {
