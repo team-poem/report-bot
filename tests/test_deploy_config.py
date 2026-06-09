@@ -38,3 +38,26 @@ def test_traefik_compose():
     assert any("/acme" in v for v in vols)
     assert svc["networks"] == ["proxy"]
     assert c["networks"]["proxy"]["external"] is True
+
+
+def test_reportbot_compose_has_traefik_labels_and_no_host_port():
+    c = _load_yaml("docker-compose.yml")
+    svc = c["services"]["report-bot"]
+    joined = "\n".join(svc["labels"])
+    assert "traefik.enable=true" in joined
+    assert "Host(`report-bot.${PUBLIC_IP}.sslip.io`)" in joined
+    assert "entrypoints=websecure" in joined
+    assert "tls.certresolver=le" in joined
+    assert "loadbalancer.server.port=8000" in joined
+    assert svc["networks"] == ["proxy"]
+    assert c["networks"]["proxy"]["external"] is True
+    # 호스트 포트 공개 제거: 8000:8000 매핑이 없어야 한다(Traefik 경유)
+    assert "8000:8000" not in svc.get("ports", [])
+
+
+def test_root_env_example_and_gitignore():
+    env = (REPO / ".env.example").read_text(encoding="utf-8")
+    assert "PUBLIC_IP=" in env
+    gi = (REPO / ".gitignore").read_text(encoding="utf-8")
+    assert ".env" in gi
+    assert "acme" in gi
