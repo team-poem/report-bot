@@ -61,3 +61,14 @@ def test_root_env_example_and_gitignore():
     gi = (REPO / ".gitignore").read_text(encoding="utf-8")
     assert ".env" in gi
     assert "acme" in gi
+
+
+def test_deploy_readme_has_guide_and_templates():
+    txt = (REPO / "deploy/README.md").read_text(encoding="utf-8")
+    assert "docker network create proxy" in txt
+    assert "curl ifconfig.me" in txt
+    # 다른 두 서비스 라벨 템플릿
+    assert "rules-bot.${PUBLIC_IP}.sslip.io" in txt
+    assert "loadbalancer.server.port=8787" in txt
+    assert "lms-bot.${PUBLIC_IP}.sslip.io" in txt
+    assert "loadbalancer.server.port=8080" in txt
