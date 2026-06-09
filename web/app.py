@@ -6,11 +6,12 @@ import json
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 
 from web.codex_runner import run_codex
 from web.job_manager import JobManager
 from web.pipeline_runner import convert
+from web.report_renderer import render_html
 from web.worker import run_job
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -67,12 +68,13 @@ def get_job(job_id: str) -> dict:
     return {"id": job.id, "state": job.state.value, "step": job.step, "error": job.error}
 
 
-@app.get("/jobs/{job_id}/report", response_class=FileResponse)
-def get_report(job_id: str) -> FileResponse:
+@app.get("/jobs/{job_id}/report", response_class=HTMLResponse)
+def get_report(job_id: str) -> HTMLResponse:
     job = get_manager().get(job_id)
     if job is None or not job.report_path.exists():
         raise HTTPException(status_code=404, detail="리포트가 아직 없습니다.")
-    return FileResponse(job.report_path, media_type="text/markdown; charset=utf-8")
+    md_text = job.report_path.read_text(encoding="utf-8")
+    return HTMLResponse(render_html(md_text))
 
 
 @app.get("/jobs/{job_id}/events")

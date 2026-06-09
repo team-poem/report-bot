@@ -4,7 +4,6 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>한글 문서 분석 리포트</title>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     body { font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; max-width: 880px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
     h1 { font-size: 1.4rem; }
@@ -12,11 +11,8 @@
     button { padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; }
     #log { background: #111; color: #9fe; font-family: monospace; font-size: 0.8rem; padding: 0.75rem; height: 9rem; overflow-y: auto; white-space: pre-wrap; border-radius: 6px; margin-top: 1rem; }
     #report { border-top: 2px solid #eee; margin-top: 1.5rem; padding-top: 1rem; }
-    #report table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.9rem; }
-    #report th, #report td { border: 1px solid #c8c8c8; padding: 6px 10px; text-align: left; vertical-align: top; }
-    #report th { background: #f3f4f6; font-weight: 600; }
-    #report tr:nth-child(even) td { background: #fafafa; }
-    #report table { display: block; overflow-x: auto; }
+    #report a { display: inline-block; margin-bottom: 0.5rem; }
+    .report-frame { width: 100%; height: 70vh; border: 1px solid #ddd; border-radius: 6px; background: #fff; }
     .status { font-weight: 600; margin-top: 0.5rem; }
     .err { color: #c00; }
     label { display:block; margin-top: 0.75rem; font-weight:600; }
@@ -110,13 +106,17 @@
       const statusResp = await fetch(`/jobs/${jobId}`);
       const status = await statusResp.json();
       if (status.state !== 'done') return;
-      const md = await (await fetch(`/jobs/${jobId}/report`)).text();
-      reportEl.innerHTML = marked.parse(md);
+      const url = `/jobs/${jobId}/report`;
+      reportEl.innerHTML = '';
       const dl = document.createElement('a');
-      dl.href = `/jobs/${jobId}/report`;
-      dl.textContent = '⬇ report.md 다운로드';
-      dl.setAttribute('download', 'report.md');
-      reportEl.prepend(dl);
+      dl.href = url;
+      dl.textContent = '⬇ report.html 다운로드';
+      dl.setAttribute('download', 'report.html');
+      reportEl.appendChild(dl);
+      const frame = document.createElement('iframe');
+      frame.src = url;
+      frame.className = 'report-frame';
+      reportEl.appendChild(frame);
     }
   </script>
 </body>
