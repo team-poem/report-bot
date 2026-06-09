@@ -1,0 +1,14 @@
+output/
+output_test/
+input_hwp/
+jobs/
+__pycache__/
+*.pyc
+.DS_Store
+.ralph/
+.venv/
+venv/
+
+# 대용량 원본 문서 (저장소에는 코드/spec만)
+*.hwp
+*.hwpx
