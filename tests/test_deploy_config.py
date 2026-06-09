@@ -24,3 +24,17 @@ def test_traefik_static_config():
     docker = cfg["providers"]["docker"]
     assert docker["exposedByDefault"] is False
     assert docker["network"] == "proxy"
+
+
+def test_traefik_compose():
+    c = _load_yaml("deploy/traefik/docker-compose.yml")
+    svc = c["services"]["traefik"]
+    assert svc["image"].startswith("traefik:v3")
+    assert "80:80" in svc["ports"]
+    assert "443:443" in svc["ports"]
+    vols = svc["volumes"]
+    assert any("/var/run/docker.sock" in v and v.endswith(":ro") for v in vols)
+    assert any("traefik.yml" in v and v.endswith(":ro") for v in vols)
+    assert any("/acme" in v for v in vols)
+    assert svc["networks"] == ["proxy"]
+    assert c["networks"]["proxy"]["external"] is True
