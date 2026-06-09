@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, Form, HTTPException, UploadFile
@@ -10,6 +11,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 
 from web.codex_runner import run_codex
 from web.job_manager import JobManager
+from web.job_runner import JobRunner
 from web.pipeline_runner import convert
 from web.report_renderer import render_html
 from web.worker import run_job
@@ -36,6 +38,39 @@ def reset_manager() -> None:
     _manager = None
 
 
+_runner: JobRunner | None = None
+
+
+def _max_concurrency() -> int:
+    """동시 실행 잡 수. 환경변수 REPORT_BOT_MAX_CONCURRENCY, 기본 3, 잘못된 값은 3으로 폴백."""
+    try:
+        n = int(os.environ.get("REPORT_BOT_MAX_CONCURRENCY", "3"))
+    except ValueError:
+        return 3
+    return n if n >= 1 else 3
+
+
+def get_runner() -> JobRunner:
+    global _runner
+    if _runner is None:
+        _runner = JobRunner(max_workers=_max_concurrency())
+    return _runner
+
+
+def reset_runner() -> None:
+    """테스트에서 동시성/runner 를 다시 만들기 위한 훅. 기존 runner 는 정리한다."""
+    global _runner
+    if _runner is not None:
+        _runner.shutdown(wait=False)
+    _runner = None
+
+
+@app.on_event("shutdown")
+def _shutdown_runner() -> None:
+    if _runner is not None:
+        _runner.shutdown(wait=False)
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
     return HTMLResponse((STATIC_DIR / "index.html").read_text(encoding="utf-8"))
@@ -53,10 +88,7 @@ async def create_job(file: UploadFile, request_text: str = Form(...)) -> dict:
         request_text=request_text,
     )
 
-    loop = asyncio.get_running_loop()
-    loop.run_in_executor(
-        None, run_job, job, manager, convert, run_codex
-    )
+    get_runner().submit(run_job, job, manager, convert, run_codex)
     return {"job_id": job.id}
 
 

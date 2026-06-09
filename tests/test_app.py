@@ -32,6 +32,7 @@ def test_post_job_then_report_happy_path(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(app_module, "convert", fake_convert)
     monkeypatch.setattr(app_module, "run_codex", fake_codex)
     app_module.reset_manager()
+    app_module.reset_runner()
 
     client = TestClient(app_module.app)
     resp = client.post(
@@ -85,3 +86,39 @@ def test_index_served(monkeypatch, tmp_path: Path):
     resp = client.get("/")
     assert resp.status_code == 200
     assert "분석" in resp.text
+
+
+def test_concurrency_limit_one_still_completes_all_jobs(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(app_module, "JOBS_DIR", tmp_path / "jobs")
+    monkeypatch.setenv("REPORT_BOT_MAX_CONCURRENCY", "1")
+
+    def fake_convert(upload_path, converted_root):
+        doc_dir = Path(converted_root) / "doc"
+        doc_dir.mkdir(parents=True, exist_ok=True)
+        return doc_dir
+
+    def fake_codex(converted_dir, request_text, report_path, on_event, **kwargs):
+        Path(report_path).write_text("# 리포트", encoding="utf-8")
+
+    monkeypatch.setattr(app_module, "convert", fake_convert)
+    monkeypatch.setattr(app_module, "run_codex", fake_codex)
+    app_module.reset_manager()
+    app_module.reset_runner()  # env=1 을 반영한 새 runner
+
+    client = TestClient(app_module.app)
+    try:
+        ids = []
+        for _ in range(2):
+            resp = client.post(
+                "/jobs",
+                files={"file": ("a.hwp", b"dummy", "application/octet-stream")},
+                data={"request_text": "정리"},
+            )
+            assert resp.status_code == 200
+            ids.append(resp.json()["job_id"])
+
+        # 동시성 1이라 직렬 처리되더라도 두 잡 모두 결국 done 에 도달해야 한다
+        for job_id in ids:
+            assert _wait_state(client, job_id, "done") == "done"
+    finally:
+        app_module.reset_runner()  # 다음 테스트를 위해 기본 동시성 runner 로 되돌림
