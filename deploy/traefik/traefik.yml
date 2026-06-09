@@ -1,0 +1,25 @@
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+
+certificatesResolvers:
+  le:
+    acme:
+      email: "you@example.com"   # ← 본인 이메일로 직접 수정 (정적 파일은 env 치환 안 됨)
+      storage: /acme/acme.json
+      tlsChallenge: {}
+
+providers:
+  docker:
+    exposedByDefault: false
+    network: proxy
+
+api:
+  dashboard: false
