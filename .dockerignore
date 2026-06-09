@@ -1,0 +1,14 @@
+.git
+jobs/
+output/
+output_test/
+input_hwp/
+*.hwp
+*.hwpx
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ralph/
+.DS_Store
+docs/

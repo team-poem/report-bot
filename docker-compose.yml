@@ -1,0 +1,22 @@
+services:
+  report-bot:
+    build: .
+    volumes:
+      - ./jobs:/app/jobs                       # 산출물 영속
+      - ${HOME}/.codex:/root/.codex:ro         # codex 인증(후속: 이미지에 codex 설치 시)
+    environment:
+      - CODEX_HOME=/root/.codex
+      - REPORT_BOT_MAX_CONCURRENCY=3
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.reportbot.rule=Host(`report-bot.${PUBLIC_IP}.sslip.io`)
+      - traefik.http.routers.reportbot.entrypoints=websecure
+      - traefik.http.routers.reportbot.tls.certresolver=le
+      - traefik.http.services.reportbot.loadbalancer.server.port=8000
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true

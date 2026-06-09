@@ -12,3 +12,7 @@ venv/
 # 대용량 원본 문서 (저장소에는 코드/spec만)
 *.hwp
 *.hwpx
+
+# 배포 비밀/상태 (커밋 금지)
+.env
+deploy/traefik/acme/
