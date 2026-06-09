@@ -44,8 +44,10 @@ def index() -> HTMLResponse:
 async def create_job(file: UploadFile, request_text: str = Form(...)) -> dict:
     manager = get_manager()
     data = await file.read()
+    # 클라이언트가 보낸 파일명은 신뢰하지 않는다(경로 탈출 방지): 마지막 경로 요소만 사용.
+    safe_name = Path(file.filename or "upload.bin").name or "upload.bin"
     job = manager.create(
-        upload_filename=file.filename or "upload.bin",
+        upload_filename=safe_name,
         file_bytes=data,
         request_text=request_text,
     )
