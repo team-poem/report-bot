@@ -47,6 +47,25 @@
       logEl.scrollTop = logEl.scrollHeight;
     }
 
+    // codex exec --json 이벤트를 읽기 좋은 한 줄로 변환. 표시할 게 없으면 null.
+    function describeEvent(data) {
+      const item = data.item || {};
+      if (data.type === 'item.started') {
+        if (item.type === 'command_execution') return '$ ' + (item.command || '');
+        return null; // agent_message 등은 completed 때 본문을 보여준다
+      }
+      if (data.type === 'item.completed') {
+        if (item.type === 'agent_message' || item.type === 'reasoning') return item.text || '';
+        return null; // command_execution 완료는 started 때 이미 표시
+      }
+      if (data.type === 'turn.completed' && data.usage) {
+        return '· 분석 완료 (출력 토큰 ' + data.usage.output_tokens + ')';
+      }
+      if (data.type === 'raw') return data.text || '';
+      if (data.type === 'thread.started' || data.type === 'turn.started') return null;
+      return data.text || null;
+    }
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       reportEl.innerHTML = '';
@@ -75,7 +94,8 @@
           es.close();
           await loadReport(job_id);
         } else {
-          appendLog(data.text || JSON.stringify(data));
+          const line = describeEvent(data);
+          if (line) appendLog(line);
         }
       };
       es.onerror = () => { es.close(); };
