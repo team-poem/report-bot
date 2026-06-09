@@ -8,4 +8,5 @@ services:
       - ${HOME}/.codex:/root/.codex:ro         # codex 인증(후속: 이미지에 codex 설치 시)
     environment:
       - CODEX_HOME=/root/.codex
+      - REPORT_BOT_MAX_CONCURRENCY=3
     restart: unless-stopped

@@ -101,6 +101,8 @@ python3 -m uvicorn web.app:app --reload --port 8000
 브라우저에서 `http://127.0.0.1:8000` 접속 → 파일 업로드 + 요청 입력 → 분석 시작.
 산출물은 `jobs/<job_id>/`(converted/, report.md, codex_log.jsonl, status.json)에 저장됩니다.
 
+동시 실행 잡 수는 환경변수 `REPORT_BOT_MAX_CONCURRENCY`로 정합니다(기본 3). 초과분은 대기열에서 차례를 기다립니다.
+
 테스트:
 
 ```bash
