@@ -80,3 +80,29 @@ output/
 - 수량 단위: `명`, `건`, `개`, `회`, `개월`, `년` 등
 
 다음 단계에서는 문서 유형별 스키마와 LLM 추출을 붙여 `facts.json` 품질을 높이면 됩니다.
+
+## 웹앱 (업로드 → Codex 분석 리포트)
+
+담당자가 문서를 업로드하고 요청을 적으면 codex 가 분석 리포트를 만들어 보여줍니다.
+
+준비:
+
+```bash
+python3 -m pip install -r requirements.txt   # fastapi, uvicorn, python-multipart
+codex login                                  # codex 인증(최초 1회)
+```
+
+실행:
+
+```bash
+python3 -m uvicorn web.app:app --reload --port 8000
+```
+
+브라우저에서 `http://127.0.0.1:8000` 접속 → 파일 업로드 + 요청 입력 → 분석 시작.
+산출물은 `jobs/<job_id>/`(converted/, report.md, codex_log.jsonl, status.json)에 저장됩니다.
+
+테스트:
+
+```bash
+python3 -m pytest -q
+```
