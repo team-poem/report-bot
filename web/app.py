@@ -136,7 +136,7 @@ def get_hwpx(job_id: str) -> FileResponse:
     if job is None or not job.result_path.exists():
         raise HTTPException(status_code=404, detail="한글 파일이 아직 없습니다.")
     filename = "취합문서.hwpx" if job.output_type == "merge" else "분석리포트.hwpx"
-    return FileResponse(job.result_path, filename=filename, media_type="application/octet-stream")
+    return FileResponse(job.result_path, filename=filename, media_type="application/hwp+zip")
 
 
 @app.get("/jobs/{job_id}/events")

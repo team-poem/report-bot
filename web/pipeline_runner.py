@@ -47,5 +47,5 @@ def convert_many(upload_paths: list[Path], converted_root: Path) -> list[Path]:
         try:
             doc_dirs.append(convert(path, converted_root))
         except Exception as exc:
-            raise PipelineError(f"'{Path(path).name}' 변환 실패: {exc}") from exc
+            raise PipelineError(f"'{Path(path).name}': {exc}") from exc
     return doc_dirs
