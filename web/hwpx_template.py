@@ -27,7 +27,7 @@ NS = {
 _HP_P = f"{{{NS['hp']}}}p"
 _HP_T = f"{{{NS['hp']}}}t"
 
-_MARKER_RE = re.compile(r"^\{\{(본문|추가|수정시작|수정끝)(?::\s*(.*?))?\}\}$")
+_MARKER_RE = re.compile(r"^\{\{(본문|추가|수정시작|수정끝)(?::\s*([^{}]*))?\}\}$")
 _LOOSE_MARKER_RE = re.compile(r"\{\{(본문|추가|수정시작|수정끝)")
 _SECTION_RE = re.compile(r"Contents/section\d+\.xml")
 
@@ -61,14 +61,19 @@ def _register_namespaces() -> None:
 
 
 def _para_text(p: ET.Element) -> str:
-    """문단의 모든 run 텍스트를 합친다(마커가 run 으로 쪼개진 경우 대비)."""
-    return "".join(t.text or "" for t in p.iter(_HP_T))
+    """문단의 직계 run 텍스트만 합친다(마커가 run 으로 쪼개진 경우 대비).
+    중첩된 표(run 안의 hp:tbl) 내부 텍스트는 포함하지 않는다 — 표 칸 문단은
+    별도의 hp:p 로 순회되므로 거기서 따로 검사된다."""
+    return "".join(t.text or "" for t in p.findall("hp:run/hp:t", NS))
 
 
 def _read_sections(source: Path | IO[bytes]) -> dict[str, ET.Element]:
     try:
         with zipfile.ZipFile(source) as zf:
-            names = sorted(n for n in zf.namelist() if _SECTION_RE.fullmatch(n))
+            names = sorted(
+                (n for n in zf.namelist() if _SECTION_RE.fullmatch(n)),
+                key=lambda n: int(re.search(r"section(\d+)", n).group(1)),
+            )
             if not names:
                 raise TemplateError("HWPX 안에 Contents/section*.xml 이 없습니다.")
             return {n: ET.fromstring(zf.read(n)) for n in names}
