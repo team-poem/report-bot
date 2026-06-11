@@ -317,6 +317,14 @@ def extract_facts(doc_id: str, source_file: Path, markdown: str, tables: list[Ex
     return facts
 
 
+def _xlsx_cell(value: Any) -> Any:
+    """openpyxl 은 dict/list 셀 값에서 죽는다(kordoc 이 NEEDS_OCR 같은
+    에러 객체를 표 안에 끼워 넣는 경우). 스칼라가 아니면 JSON 문자열로 강등."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
 def write_xlsx(path: Path, sheets: dict[str, list[dict[str, Any]] | list[list[Any]]]) -> bool:
     try:
         from openpyxl import Workbook
@@ -341,10 +349,10 @@ def write_xlsx(path: Path, sheets: dict[str, list[dict[str, Any]] | list[list[An
                         headers.append(key)
             ws.append(headers)
             for row in rows:  # type: ignore[assignment]
-                ws.append([row.get(h, "") for h in headers])
+                ws.append([_xlsx_cell(row.get(h, "")) for h in headers])
         else:
             for row in rows:  # type: ignore[assignment]
-                ws.append(row)
+                ws.append([_xlsx_cell(cell) for cell in row])
     wb.save(path)
     return True
 
