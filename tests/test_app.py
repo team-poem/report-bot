@@ -17,28 +17,42 @@ def _wait_state(client, job_id, target, timeout=5.0):
     return client.get(f"/jobs/{job_id}").json()["state"]
 
 
+# ---------------------------------------------------------------------------
+# Module-level fakes shared across tests
+# ---------------------------------------------------------------------------
+
+def fake_convert_many(upload_paths, converted_root):
+    doc_dir = Path(converted_root) / "doc"
+    doc_dir.mkdir(parents=True, exist_ok=True)
+    return [doc_dir]
+
+
+def fake_codex(converted_dir, request_text, report_path, output_type, on_event, **kwargs):
+    on_event({"type": "item", "text": "분석 중"})
+    Path(report_path).write_text("# 분석 리포트\n결과", encoding="utf-8")
+
+
+def fake_hwpx(report_path, result_path):
+    Path(result_path).write_bytes(b"PK-fake-hwpx")
+
+
+# ---------------------------------------------------------------------------
+# Existing tests (updated)
+# ---------------------------------------------------------------------------
+
 def test_post_job_then_report_happy_path(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(app_module, "JOBS_DIR", tmp_path / "jobs")
-
-    def fake_convert(upload_path, converted_root):
-        doc_dir = Path(converted_root) / "doc"
-        doc_dir.mkdir(parents=True, exist_ok=True)
-        return doc_dir
-
-    def fake_codex(converted_dir, request_text, report_path, on_event, **kwargs):
-        on_event({"type": "item", "text": "분석 중"})
-        Path(report_path).write_text("# 분석 리포트\n결과", encoding="utf-8")
-
-    monkeypatch.setattr(app_module, "convert", fake_convert)
+    monkeypatch.setattr(app_module, "convert_many", fake_convert_many)
     monkeypatch.setattr(app_module, "run_codex", fake_codex)
+    monkeypatch.setattr(app_module, "write_hwpx", fake_hwpx)
     app_module.reset_manager()
     app_module.reset_runner()
 
     client = TestClient(app_module.app)
     resp = client.post(
         "/jobs",
-        files={"file": ("요람.hwp", b"dummy", "application/octet-stream")},
-        data={"request_text": "정리해줘"},
+        files=[("files", ("요람.hwp", b"dummy", "application/octet-stream"))],
+        data={"request_text": "정리해줘", "output_type": "report"},
     )
     assert resp.status_code == 200
     job_id = resp.json()["job_id"]
@@ -61,15 +75,17 @@ def test_upload_filename_is_sanitized_against_traversal(tmp_path: Path, monkeypa
     jobs_dir = tmp_path / "jobs"
     monkeypatch.setattr(app_module, "JOBS_DIR", jobs_dir)
     # 백그라운드 변환/분석은 무력화(파일 저장 검증만 목적)
-    monkeypatch.setattr(app_module, "convert", lambda *a, **k: tmp_path / "noop")
-    monkeypatch.setattr(app_module, "run_codex", lambda *a, **k: None)
+    monkeypatch.setattr(app_module, "convert_many", fake_convert_many)
+    monkeypatch.setattr(app_module, "run_codex", fake_codex)
+    monkeypatch.setattr(app_module, "write_hwpx", fake_hwpx)
     app_module.reset_manager()
+    app_module.reset_runner()
 
     client = TestClient(app_module.app)
     resp = client.post(
         "/jobs",
-        files={"file": ("../../evil.hwp", b"dummy", "application/octet-stream")},
-        data={"request_text": "x"},
+        files=[("files", ("../../evil.hwp", b"dummy", "application/octet-stream"))],
+        data={"request_text": "x", "output_type": "report"},
     )
     assert resp.status_code == 200
     job_id = resp.json()["job_id"]
@@ -91,17 +107,9 @@ def test_index_served(monkeypatch, tmp_path: Path):
 def test_concurrency_limit_one_still_completes_all_jobs(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(app_module, "JOBS_DIR", tmp_path / "jobs")
     monkeypatch.setenv("REPORT_BOT_MAX_CONCURRENCY", "1")
-
-    def fake_convert(upload_path, converted_root):
-        doc_dir = Path(converted_root) / "doc"
-        doc_dir.mkdir(parents=True, exist_ok=True)
-        return doc_dir
-
-    def fake_codex(converted_dir, request_text, report_path, on_event, **kwargs):
-        Path(report_path).write_text("# 리포트", encoding="utf-8")
-
-    monkeypatch.setattr(app_module, "convert", fake_convert)
+    monkeypatch.setattr(app_module, "convert_many", fake_convert_many)
     monkeypatch.setattr(app_module, "run_codex", fake_codex)
+    monkeypatch.setattr(app_module, "write_hwpx", fake_hwpx)
     app_module.reset_manager()
     app_module.reset_runner()  # env=1 을 반영한 새 runner
 
@@ -111,8 +119,8 @@ def test_concurrency_limit_one_still_completes_all_jobs(tmp_path: Path, monkeypa
         for _ in range(2):
             resp = client.post(
                 "/jobs",
-                files={"file": ("a.hwp", b"dummy", "application/octet-stream")},
-                data={"request_text": "정리"},
+                files=[("files", ("a.hwp", b"dummy", "application/octet-stream"))],
+                data={"request_text": "정리", "output_type": "report"},
             )
             assert resp.status_code == 200
             ids.append(resp.json()["job_id"])
@@ -122,3 +130,110 @@ def test_concurrency_limit_one_still_completes_all_jobs(tmp_path: Path, monkeypa
             assert _wait_state(client, job_id, "done") == "done"
     finally:
         app_module.reset_runner()  # 다음 테스트를 위해 기본 동시성 runner 로 되돌림
+
+
+# ---------------------------------------------------------------------------
+# New tests
+# ---------------------------------------------------------------------------
+
+def test_post_multiple_files_all_saved(tmp_path: Path, monkeypatch):
+    jobs_dir = tmp_path / "jobs"
+    monkeypatch.setattr(app_module, "JOBS_DIR", jobs_dir)
+    monkeypatch.setattr(app_module, "convert_many", fake_convert_many)
+    monkeypatch.setattr(app_module, "run_codex", fake_codex)
+    monkeypatch.setattr(app_module, "write_hwpx", fake_hwpx)
+    app_module.reset_manager()
+    app_module.reset_runner()
+
+    client = TestClient(app_module.app)
+    resp = client.post(
+        "/jobs",
+        files=[
+            ("files", ("a.hwp", b"1", "application/octet-stream")),
+            ("files", ("b.xlsx", b"2", "application/octet-stream")),
+        ],
+        data={"request_text": "취합", "output_type": "merge"},
+    )
+    assert resp.status_code == 200
+    job_id = resp.json()["job_id"]
+    upload_dir = jobs_dir / job_id / "upload"
+    assert (upload_dir / "a.hwp").exists() and (upload_dir / "b.xlsx").exists()
+
+
+def test_duplicate_filenames_are_suffixed(tmp_path: Path, monkeypatch):
+    jobs_dir = tmp_path / "jobs"
+    monkeypatch.setattr(app_module, "JOBS_DIR", jobs_dir)
+    monkeypatch.setattr(app_module, "convert_many", fake_convert_many)
+    monkeypatch.setattr(app_module, "run_codex", fake_codex)
+    monkeypatch.setattr(app_module, "write_hwpx", fake_hwpx)
+    app_module.reset_manager()
+    app_module.reset_runner()
+
+    client = TestClient(app_module.app)
+    resp = client.post(
+        "/jobs",
+        files=[
+            ("files", ("같은이름.hwp", b"1", "application/octet-stream")),
+            ("files", ("같은이름.hwp", b"2", "application/octet-stream")),
+        ],
+        data={"request_text": "x", "output_type": "report"},
+    )
+    assert resp.status_code == 200
+    upload_dir = jobs_dir / resp.json()["job_id"] / "upload"
+    assert (upload_dir / "같은이름.hwp").exists()
+    assert (upload_dir / "같은이름_2.hwp").exists()
+
+
+def test_invalid_output_type_rejected(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(app_module, "JOBS_DIR", tmp_path / "jobs")
+    app_module.reset_manager()
+    client = TestClient(app_module.app)
+    resp = client.post(
+        "/jobs",
+        files=[("files", ("a.hwp", b"1", "application/octet-stream"))],
+        data={"request_text": "x", "output_type": "pptx"},
+    )
+    assert resp.status_code == 400
+
+
+def test_unsupported_extension_rejected(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(app_module, "JOBS_DIR", tmp_path / "jobs")
+    app_module.reset_manager()
+    client = TestClient(app_module.app)
+    resp = client.post(
+        "/jobs",
+        files=[("files", ("virus.exe", b"1", "application/octet-stream"))],
+        data={"request_text": "x", "output_type": "report"},
+    )
+    assert resp.status_code == 400
+    assert "virus.exe" in resp.json()["detail"]
+
+
+def test_hwpx_download_after_done(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(app_module, "JOBS_DIR", tmp_path / "jobs")
+    monkeypatch.setattr(app_module, "convert_many", fake_convert_many)
+    monkeypatch.setattr(app_module, "run_codex", fake_codex)
+    monkeypatch.setattr(app_module, "write_hwpx", fake_hwpx)
+    app_module.reset_manager()
+    app_module.reset_runner()
+
+    client = TestClient(app_module.app)
+    resp = client.post(
+        "/jobs",
+        files=[("files", ("a.hwp", b"1", "application/octet-stream"))],
+        data={"request_text": "x", "output_type": "report"},
+    )
+    job_id = resp.json()["job_id"]
+    assert _wait_state(client, job_id, "done") == "done"
+
+    dl = client.get(f"/jobs/{job_id}/hwpx")
+    assert dl.status_code == 200
+    assert dl.content == b"PK-fake-hwpx"
+    assert ".hwpx" in dl.headers["content-disposition"]
+
+
+def test_hwpx_404_before_generated(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(app_module, "JOBS_DIR", tmp_path / "jobs")
+    app_module.reset_manager()
+    client = TestClient(app_module.app)
+    assert client.get("/jobs/nope/hwpx").status_code == 404
