@@ -38,8 +38,8 @@ def run_codex(
     converted_dir: Path,
     request_text: str,
     report_path: Path,
+    on_event: Callable[[dict], None],
     output_type: str = "report",
-    on_event: Callable[[dict], None] = lambda e: None,
     codex_cmd: str = "codex",
     timeout: int = 1800,
 ) -> None:
