@@ -237,3 +237,105 @@ def test_hwpx_404_before_generated(tmp_path: Path, monkeypatch):
     app_module.reset_manager()
     client = TestClient(app_module.app)
     assert client.get("/jobs/nope/hwpx").status_code == 404
+
+
+def _make_template_bytes() -> bytes:
+    from web.hwpx_writer import package_hwpx, render_blocks
+    return package_hwpx(render_blocks("{{본문}}\n"))
+
+
+def test_template_upload_accepted_and_saved(tmp_path: Path, monkeypatch):
+    jobs_dir = tmp_path / "jobs"
+    monkeypatch.setattr(app_module, "JOBS_DIR", jobs_dir)
+    monkeypatch.setattr(app_module, "convert_many", fake_convert_many)
+    monkeypatch.setattr(app_module, "run_codex", fake_codex)
+    monkeypatch.setattr(app_module, "write_hwpx", fake_hwpx)
+    app_module.reset_manager()
+    app_module.reset_runner()
+
+    client = TestClient(app_module.app)
+    resp = client.post(
+        "/jobs",
+        files=[
+            ("files", ("a.hwp", b"1", "application/octet-stream")),
+            ("template", ("양식.hwpx", _make_template_bytes(), "application/octet-stream")),
+        ],
+        data={"request_text": "x", "output_type": "report"},
+    )
+    assert resp.status_code == 200
+    job_id = resp.json()["job_id"]
+    assert (jobs_dir / job_id / "template" / "양식.hwpx").exists()
+
+
+def test_template_without_markers_rejected_400(tmp_path: Path, monkeypatch):
+    from web.hwpx_writer import package_hwpx, render_blocks
+
+    monkeypatch.setattr(app_module, "JOBS_DIR", tmp_path / "jobs")
+    app_module.reset_manager()
+    client = TestClient(app_module.app)
+    no_marker = package_hwpx(render_blocks("마커 없음\n"))
+    resp = client.post(
+        "/jobs",
+        files=[
+            ("files", ("a.hwp", b"1", "application/octet-stream")),
+            ("template", ("양식.hwpx", no_marker, "application/octet-stream")),
+        ],
+        data={"request_text": "x", "output_type": "report"},
+    )
+    assert resp.status_code == 400
+    assert "자리표시자" in resp.json()["detail"]
+
+
+def test_template_wrong_extension_rejected_400(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(app_module, "JOBS_DIR", tmp_path / "jobs")
+    app_module.reset_manager()
+    client = TestClient(app_module.app)
+    resp = client.post(
+        "/jobs",
+        files=[
+            ("files", ("a.hwp", b"1", "application/octet-stream")),
+            ("template", ("양식.hwp", b"PK", "application/octet-stream")),
+        ],
+        data={"request_text": "x", "output_type": "report"},
+    )
+    assert resp.status_code == 400
+    assert ".hwpx" in resp.json()["detail"]
+
+
+def test_template_not_a_zip_rejected_400(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(app_module, "JOBS_DIR", tmp_path / "jobs")
+    app_module.reset_manager()
+    client = TestClient(app_module.app)
+    resp = client.post(
+        "/jobs",
+        files=[
+            ("files", ("a.hwp", b"1", "application/octet-stream")),
+            ("template", ("양식.hwpx", b"not-a-zip", "application/octet-stream")),
+        ],
+        data={"request_text": "x", "output_type": "report"},
+    )
+    assert resp.status_code == 400
+
+
+def test_template_filename_traversal_sanitized(tmp_path: Path, monkeypatch):
+    jobs_dir = tmp_path / "jobs"
+    monkeypatch.setattr(app_module, "JOBS_DIR", jobs_dir)
+    monkeypatch.setattr(app_module, "convert_many", fake_convert_many)
+    monkeypatch.setattr(app_module, "run_codex", fake_codex)
+    monkeypatch.setattr(app_module, "write_hwpx", fake_hwpx)
+    app_module.reset_manager()
+    app_module.reset_runner()
+
+    client = TestClient(app_module.app)
+    resp = client.post(
+        "/jobs",
+        files=[
+            ("files", ("a.hwp", b"1", "application/octet-stream")),
+            ("template", ("../../evil.hwpx", _make_template_bytes(), "application/octet-stream")),
+        ],
+        data={"request_text": "x", "output_type": "report"},
+    )
+    assert resp.status_code == 200
+    job_id = resp.json()["job_id"]
+    assert (jobs_dir / job_id / "template" / "evil.hwpx").exists()
+    assert not (tmp_path / "evil.hwpx").exists()
