@@ -118,14 +118,24 @@
     async function loadReport(jobId) {
       const statusResp = await fetch(`/jobs/${jobId}`);
       const status = await statusResp.json();
-      if (status.state !== 'done') return;
+      const isDone = status.state === 'done';
+      if (!isDone && status.state !== 'failed') return;
+
       const url = `/jobs/${jobId}/report`;
+      if (!isDone) {
+        // 실패한 잡: 리포트가 이미 만들어져 있으면(HWPX 생성 실패 등) 미리보기만 제공
+        // FastAPI 버전에 따라 HEAD 가 405 를 반환할 수 있으므로 GET 으로 확인
+        const probe = await fetch(url);
+        if (!probe.ok) return;
+      }
       reportEl.innerHTML = '';
-      const hwpx = document.createElement('a');
-      hwpx.href = `/jobs/${jobId}/hwpx`;
-      hwpx.textContent = '⬇ 한글 파일(.hwpx) 다운로드';
-      reportEl.appendChild(hwpx);
-      reportEl.appendChild(document.createElement('br'));
+      if (isDone) {
+        const hwpx = document.createElement('a');
+        hwpx.href = `/jobs/${jobId}/hwpx`;
+        hwpx.textContent = '⬇ 한글 파일(.hwpx) 다운로드';
+        reportEl.appendChild(hwpx);
+        reportEl.appendChild(document.createElement('br'));
+      }
       const dl = document.createElement('a');
       dl.href = url;
       dl.textContent = '⬇ report.html 다운로드';
