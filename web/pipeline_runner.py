@@ -34,3 +34,18 @@ def convert(upload_path: Path, converted_root: Path) -> Path:
             f"변환 실패: {upload_path.name} 에서 document.md 를 만들지 못했습니다."
         )
     return doc_dir
+
+
+# 업로드 검증에서 쓰도록 재노출
+SUPPORTED_EXTENSIONS = kordoc_pipeline.SUPPORTED_EXTENSIONS
+
+
+def convert_many(upload_paths: list[Path], converted_root: Path) -> list[Path]:
+    """여러 업로드 파일을 차례로 변환한다. 하나라도 실패하면 파일명을 담아 실패."""
+    doc_dirs: list[Path] = []
+    for path in upload_paths:
+        try:
+            doc_dirs.append(convert(path, converted_root))
+        except Exception as exc:
+            raise PipelineError(f"'{Path(path).name}' 변환 실패: {exc}") from exc
+    return doc_dirs
