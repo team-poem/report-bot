@@ -10,6 +10,9 @@ import io
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
+from xml.sax.saxutils import escape
+
+from web.md_blocks import Block, Heading, ListBlock, Paragraph, Span, Table, parse_blocks
 
 
 class HwpxError(RuntimeError):
@@ -271,3 +274,148 @@ def validate_hwpx(path: Path) -> None:
                     ET.fromstring(zf.read(name))
                 except ET.ParseError as exc:
                     raise HwpxError(f"{name}: XML 파싱 실패 — {exc}") from exc
+
+
+# ------------------------------------------------------------- block renderer
+
+_HEADING_CHAR_PR = {1: 4, 2: 5, 3: 6}
+
+
+def _span_char_pr(span: Span) -> int:
+    if span.bold and span.italic:
+        return 3
+    if span.bold:
+        return 1
+    if span.italic:
+        return 2
+    return 0
+
+
+class _IdGen:
+    """hp:p id 는 문서 안에서 유일하기만 하면 된다. 1은 secPr 문단이 쓴다."""
+
+    def __init__(self) -> None:
+        self._next = 2
+
+    def take(self) -> int:
+        value = self._next
+        self._next += 1
+        return value
+
+
+def _runs_xml(spans: list[Span], char_pr_override: int | None = None) -> str:
+    runs = []
+    for span in spans:
+        pr = char_pr_override if char_pr_override is not None else _span_char_pr(span)
+        runs.append(f'<hp:run charPrIDRef="{pr}"><hp:t>{escape(span.text)}</hp:t></hp:run>')
+    return "".join(runs)
+
+
+def _para_xml(ids: _IdGen, spans: list[Span], char_pr_override: int | None = None) -> str:
+    return (
+        f'<hp:p id="{ids.take()}" paraPrIDRef="0" styleIDRef="0" '
+        'pageBreak="0" columnBreak="0" merged="0">'
+        + _runs_xml(spans, char_pr_override)
+        + "</hp:p>"
+    )
+
+
+def _cell_xml(ids: _IdGen, spans: list[Span], col: int, row: int,
+              col_width: int, bold_header: bool) -> str:
+    override = 1 if bold_header else None
+    return (
+        '<hp:tc name="" header="0" hasMargin="0" protect="0" editable="0" '
+        'dirty="0" borderFillIDRef="2">'
+        '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" '
+        'vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0" '
+        'textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
+        + _para_xml(ids, spans, override)
+        + "</hp:subList>"
+        f'<hp:cellAddr colAddr="{col}" rowAddr="{row}"/>'
+        '<hp:cellSpan colSpan="1" rowSpan="1"/>'
+        f'<hp:cellSz width="{col_width}" height="1000"/>'
+        '<hp:cellMargin left="510" right="510" top="141" bottom="141"/>'
+        "</hp:tc>"
+    )
+
+
+def _table_xml(ids: _IdGen, table: Table) -> str:
+    if not table.rows:
+        return ""
+    row_cnt = len(table.rows)
+    col_cnt = max(len(r) for r in table.rows)
+    col_width = PAGE_TEXT_WIDTH // col_cnt
+    trs = []
+    for r, row in enumerate(table.rows):
+        bold_header = table.has_header and r == 0
+        tcs = []
+        for c in range(col_cnt):
+            spans = row[c] if c < len(row) else [Span("")]
+            tcs.append(_cell_xml(ids, spans, c, r, col_width, bold_header))
+        trs.append("<hp:tr>" + "".join(tcs) + "</hp:tr>")
+    tbl = (
+        f'<hp:tbl id="{ids.take()}" zOrder="0" numberingType="TABLE" '
+        'textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" '
+        f'pageBreak="CELL" repeatHeader="1" rowCnt="{row_cnt}" colCnt="{col_cnt}" '
+        'cellSpacing="0" borderFillIDRef="2" noAdjust="0">'
+        f'<hp:sz width="{PAGE_TEXT_WIDTH}" widthRelTo="ABSOLUTE" '
+        f'height="{row_cnt * 1000}" heightRelTo="ABSOLUTE" protect="0"/>'
+        '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" '
+        'allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="PARA" '
+        'vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+        '<hp:outMargin left="283" right="283" top="283" bottom="283"/>'
+        '<hp:inMargin left="510" right="510" top="141" bottom="141"/>'
+        + "".join(trs)
+        + "</hp:tbl>"
+    )
+    # 표는 문단의 run 안에 들어가는 인라인 객체다 (treatAsChar)
+    return (
+        f'<hp:p id="{ids.take()}" paraPrIDRef="0" styleIDRef="0" '
+        'pageBreak="0" columnBreak="0" merged="0">'
+        f'<hp:run charPrIDRef="0">{tbl}<hp:t/></hp:run></hp:p>'
+    )
+
+
+def _blocks_to_paras(blocks: list[Block]) -> list[str]:
+    ids = _IdGen()
+    paras: list[str] = []
+    for block in blocks:
+        if isinstance(block, Heading):
+            paras.append(_para_xml(ids, block.spans, _HEADING_CHAR_PR[block.level]))
+        elif isinstance(block, Paragraph):
+            paras.append(_para_xml(ids, block.spans))
+        elif isinstance(block, ListBlock):
+            for n, item in enumerate(block.items, start=1):
+                prefix = f"{n}. " if block.ordered else "• "
+                # Merge prefix into the first span so "• 텍스트" is contiguous in one run
+                first = Span(prefix + item[0].text, bold=item[0].bold, italic=item[0].italic)
+                paras.append(_para_xml(ids, [first, *item[1:]]))
+        elif isinstance(block, Table):
+            paras.append(_table_xml(ids, block))
+    return paras
+
+
+# ------------------------------------------------------------------ 공개 API
+
+def markdown_to_hwpx(md_text: str, out_path: Path) -> None:
+    """마크다운을 기본 서식 HWPX 로 변환해 out_path 에 쓴다."""
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(package_hwpx(_blocks_to_paras(parse_blocks(md_text))))
+
+
+def write_hwpx(report_path: Path, result_path: Path) -> None:
+    """worker 가 호출하는 진입점: report.md → result.hwpx + 자체 검증."""
+    md_text = Path(report_path).read_text(encoding="utf-8")
+    markdown_to_hwpx(md_text, Path(result_path))
+    validate_hwpx(Path(result_path))
+
+
+if __name__ == "__main__":  # 수동 검증용: python -m web.hwpx_writer in.md out.hwpx
+    import sys
+
+    if len(sys.argv) != 3:
+        sys.exit("usage: python -m web.hwpx_writer <input.md> <output.hwpx>")
+    markdown_to_hwpx(Path(sys.argv[1]).read_text(encoding="utf-8"), Path(sys.argv[2]))
+    validate_hwpx(Path(sys.argv[2]))
+    print(f"OK: {sys.argv[2]}")

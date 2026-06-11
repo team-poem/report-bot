@@ -51,3 +51,49 @@ def test_validate_hwpx_accepts_good_and_rejects_broken(tmp_path: Path):
     from web.hwpx_writer import HwpxError
     with pytest.raises(HwpxError):
         validate_hwpx(broken)
+
+
+def _section_of(md: str, tmp_path: Path) -> str:
+    from web.hwpx_writer import markdown_to_hwpx
+    out = tmp_path / "doc.hwpx"
+    markdown_to_hwpx(md, out)
+    with zipfile.ZipFile(out) as zf:
+        return zf.read("Contents/section0.xml").decode("utf-8")
+
+
+def test_markdown_heading_uses_heading_char_pr(tmp_path: Path):
+    xml = _section_of("# 큰제목\n본문입니다\n", tmp_path)
+    assert 'charPrIDRef="4"' in xml          # h1 → charPr 4
+    assert "큰제목" in xml
+    assert "본문입니다" in xml
+
+
+def test_markdown_bold_split_into_separate_run(tmp_path: Path):
+    xml = _section_of("앞 **강조** 뒤\n", tmp_path)
+    assert 'charPrIDRef="1"' in xml          # 굵게 run
+    assert "강조" in xml
+
+
+def test_markdown_table_renders_tbl_with_cells(tmp_path: Path):
+    xml = _section_of("| 학과 | 정원 |\n| --- | --- |\n| 컴공 | 40 |\n", tmp_path)
+    assert "<hp:tbl" in xml and 'rowCnt="2"' in xml and 'colCnt="2"' in xml
+    assert xml.count("<hp:tc") == 4
+    assert "컴공" in xml
+
+
+def test_markdown_list_renders_prefixed_paragraphs(tmp_path: Path):
+    xml = _section_of("- 하나\n- 둘\n\n1. 첫째\n", tmp_path)
+    assert "• 하나" in xml and "• 둘" in xml
+    assert "1. 첫째" in xml
+
+
+def test_xml_special_chars_escaped(tmp_path: Path):
+    xml = _section_of("a < b & c > d\n", tmp_path)
+    assert "a &lt; b &amp; c &gt; d" in xml
+
+
+def test_generated_doc_passes_validate(tmp_path: Path):
+    from web.hwpx_writer import markdown_to_hwpx, validate_hwpx
+    out = tmp_path / "doc.hwpx"
+    markdown_to_hwpx("# 제목\n| a | b |\n| --- | --- |\n| 1 | 2 |\n", out)
+    validate_hwpx(out)
