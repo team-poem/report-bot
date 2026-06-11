@@ -16,3 +16,4 @@ venv/
 # 배포 비밀/상태 (커밋 금지)
 .env
 deploy/traefik/acme/
+node_modules/
