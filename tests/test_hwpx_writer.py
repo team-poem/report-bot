@@ -1,6 +1,10 @@
+import shutil
+import subprocess
 import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
+
+import pytest
 
 from web.hwpx_writer import REQUIRED_ENTRIES, package_hwpx, validate_hwpx
 
@@ -47,7 +51,6 @@ def test_validate_hwpx_accepts_good_and_rejects_broken(tmp_path: Path):
 
     broken = tmp_path / "broken.hwpx"
     broken.write_bytes(b"not a zip")
-    import pytest
     from web.hwpx_writer import HwpxError
     with pytest.raises(HwpxError):
         validate_hwpx(broken)
@@ -97,3 +100,19 @@ def test_generated_doc_passes_validate(tmp_path: Path):
     out = tmp_path / "doc.hwpx"
     markdown_to_hwpx("# 제목\n| a | b |\n| --- | --- |\n| 1 | 2 |\n", out)
     validate_hwpx(out)
+
+
+@pytest.mark.skipif(shutil.which("npx") is None, reason="npx 없음 — 로컬에서만 실행")
+def test_roundtrip_generated_hwpx_through_kordoc(tmp_path: Path):
+    """우리가 만든 HWPX 를 kordoc 이 다시 읽어 텍스트가 보존되는지 확인."""
+    from web.hwpx_writer import markdown_to_hwpx
+
+    out = tmp_path / "rt.hwpx"
+    markdown_to_hwpx("# 라운드트립 제목\n본문 텍스트 보존 확인\n", out)
+    completed = subprocess.run(
+        ["npx", "-y", "kordoc", str(out), "--format", "json", "--silent"],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "라운드트립 제목" in completed.stdout
+    assert "본문 텍스트 보존 확인" in completed.stdout
