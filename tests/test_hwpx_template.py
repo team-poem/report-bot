@@ -1,5 +1,7 @@
 import io
 import re
+import shutil
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -173,3 +175,101 @@ def test_inject_styles_appends_defs_and_returns_ids(tmp_path: Path):
     # XML 정합성 유지
     from xml.etree import ElementTree as ET
     ET.fromstring(new_header)
+
+
+# ---------------------------------------------------------------------------
+# fill_template tests (Phase-2 Task 4)
+# ---------------------------------------------------------------------------
+
+def _section_text(path: Path) -> str:
+    with zipfile.ZipFile(path) as zf:
+        return zf.read("Contents/section0.xml").decode("utf-8")
+
+
+def test_fill_replaces_body_slot_and_keeps_surroundings(tmp_path: Path):
+    from web.hwpx_template import fill_template
+
+    t = make_template(tmp_path, "서문\n\n{{본문}}\n\n맺음말\n")
+    out = tmp_path / "filled.hwpx"
+    fill_template(t, {"본문-1": "# 채운 제목\n채운 본문 **강조**\n"}, out)
+
+    xml = _section_text(out)
+    assert "{{본문}}" not in xml
+    assert "채운 제목" in xml and "채운 본문" in xml
+    assert "서문" in xml and "맺음말" in xml          # 주변 문단 보존
+    from web.hwpx_writer import validate_hwpx
+    validate_hwpx(out)
+
+
+def test_fill_inherits_marker_paragraph_format_for_normal_text(tmp_path: Path):
+    from web.hwpx_template import fill_template
+
+    t = make_template(tmp_path, "{{본문}}\n")
+    out = tmp_path / "filled.hwpx"
+    fill_template(t, {"본문-1": "일반 텍스트\n"}, out)
+    xml = _section_text(out)
+    # 스켈레톤 마커 문단의 charPr 은 0 → 일반 텍스트 run 은 0 을 상속
+    assert '<hp:run charPrIDRef="0"><hp:t>일반 텍스트</hp:t></hp:run>' in xml
+
+
+def test_fill_uses_injected_ids_for_bold_and_heading(tmp_path: Path):
+    from web.hwpx_template import fill_template
+
+    t = make_template(tmp_path, "{{본문}}\n")
+    out = tmp_path / "filled.hwpx"
+    fill_template(t, {"본문-1": "# 제목\n**굵게**\n"}, out)
+    xml = _section_text(out)
+    # 스켈레톤 charPr 0~6 → 주입 베이스 7: 굵게=8, h1=11
+    assert 'charPrIDRef="8"' in xml
+    assert 'charPrIDRef="11"' in xml
+
+
+def test_fill_replaces_fix_region_inclusive(tmp_path: Path):
+    from web.hwpx_template import fill_template
+
+    t = make_template(tmp_path, (
+        "유지되는 문단\n\n{{수정시작: 갱신}}\n\n낡은 내용 1\n\n낡은 내용 2\n\n{{수정끝}}\n\n뒤 문단\n"
+    ))
+    out = tmp_path / "filled.hwpx"
+    fill_template(t, {"수정-1": "새 내용\n"}, out)
+    xml = _section_text(out)
+    assert "낡은 내용" not in xml and "수정시작" not in xml and "수정끝" not in xml
+    assert "새 내용" in xml
+    assert "유지되는 문단" in xml and "뒤 문단" in xml
+
+
+def test_fill_missing_slot_raises(tmp_path: Path):
+    from web.hwpx_template import TemplateError, fill_template
+
+    t = make_template(tmp_path, "{{본문}}\n\n{{추가: x}}\n")
+    with pytest.raises(TemplateError, match="추가-2"):
+        fill_template(t, {"본문-1": "내용"}, tmp_path / "o.hwpx")
+
+
+def test_fill_preserves_other_zip_entries(tmp_path: Path):
+    from web.hwpx_template import fill_template
+
+    t = make_template(tmp_path, "{{본문}}\n")
+    out = tmp_path / "filled.hwpx"
+    fill_template(t, {"본문-1": "x"}, out)
+    with zipfile.ZipFile(t) as a, zipfile.ZipFile(out) as b:
+        assert a.namelist() == b.namelist()
+        assert b.infolist()[0].filename == "mimetype"
+        assert b.infolist()[0].compress_type == zipfile.ZIP_STORED
+        assert a.read("version.xml") == b.read("version.xml")  # 미변경 엔트리 보존
+
+
+@pytest.mark.skipif(shutil.which("npx") is None, reason="npx 없음 — 로컬에서만 실행")
+def test_filled_template_roundtrips_through_kordoc(tmp_path: Path):
+    from web.hwpx_template import fill_template
+
+    t = make_template(tmp_path, "양식 서문\n\n{{본문}}\n")
+    out = tmp_path / "rt.hwpx"
+    fill_template(t, {"본문-1": "# 치환 제목\n치환 본문 텍스트\n"}, out)
+    completed = subprocess.run(
+        ["npx", "-y", "kordoc", str(out), "--format", "json", "--silent"],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "양식 서문" in completed.stdout
+    assert "치환 본문 텍스트" in completed.stdout

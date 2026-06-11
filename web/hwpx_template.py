@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import dataclasses
+import io
 import re
 import zipfile
 from dataclasses import dataclass
@@ -13,7 +15,7 @@ from pathlib import Path
 from typing import IO
 from xml.etree import ElementTree as ET
 
-from web.hwpx_writer import StyleIds, _border, _char_pr
+from web.hwpx_writer import StyleIds, _border, _char_pr, render_blocks, validate_hwpx
 
 NS = {
     "hp": "http://www.hancom.co.kr/hwpml/2011/paragraph",
@@ -208,3 +210,88 @@ def _inject_styles(header_text: str) -> tuple[str, StyleIds]:
         h1=base + 4, h2=base + 5, h3=base + 6, table_border_fill=fill_id,
     )
     return out, ids
+
+
+# ------------------------------------------------------------- fill
+
+def _inherited_styles(marker_para: ET.Element, injected: StyleIds) -> StyleIds:
+    """일반 텍스트는 마커 문단의 서식을 상속, 나머지는 주입된 정의를 쓴다."""
+    para_pr = int(marker_para.get("paraPrIDRef", "0"))
+    style_id = int(marker_para.get("styleIDRef", "0"))
+    run = marker_para.find(f"{{{NS['hp']}}}run")
+    char_pr = int(run.get("charPrIDRef", "0")) if run is not None else injected.normal
+    return dataclasses.replace(injected, normal=char_pr, para_pr=para_pr, style=style_id)
+
+
+def _fragment_to_elements(paras_xml: list[str]) -> list[ET.Element]:
+    wrapper = f'<w xmlns:hp="{NS["hp"]}" xmlns:hc="{NS["hc"]}">{"".join(paras_xml)}</w>'
+    return list(ET.fromstring(wrapper))
+
+
+def _serialize_section(root: ET.Element) -> bytes:
+    xml = ET.tostring(root, encoding="unicode")
+    return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + xml).encode("utf-8")
+
+
+def _rewrite_zip(src: Path, out_path: Path, replacements: dict[str, bytes]) -> None:
+    """원본 엔트리 순서를 유지하며 일부 엔트리만 교체한 zip 을 새로 쓴다."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zout:
+        for info in zin.infolist():
+            data = replacements.get(info.filename, zin.read(info.filename))
+            if info.filename == "mimetype":
+                zout.writestr(zipfile.ZipInfo("mimetype"), data,
+                              compress_type=zipfile.ZIP_STORED)
+            else:
+                zout.writestr(info.filename, data)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(buf.getvalue())
+
+
+# 템플릿 기존 hp:p id 와의 충돌을 피하는 높은 시작값. 슬롯마다 1000 칸씩 띈다.
+_SLOT_ID_BASE = 900001
+_SLOT_ID_STRIDE = 1000
+
+
+def fill_template(template_path: Path, slot_contents: dict[str, str], out_path: Path) -> None:
+    """슬롯 내용(마크다운)을 양식의 자리표시자 위치에 치환해 out_path 에 쓴다."""
+    _register_namespaces()
+    template_path = Path(template_path)
+
+    trees = _read_sections(template_path)
+    found = _collect_slots(trees)
+
+    missing = [f.slot.id for f in found if f.slot.id not in slot_contents]
+    if missing:
+        raise TemplateError(f"채워지지 않은 슬롯: {', '.join(missing)}")
+
+    with zipfile.ZipFile(template_path) as zf:
+        header_text = zf.read("Contents/header.xml").decode("utf-8")
+    new_header, injected = _inject_styles(header_text)
+
+    for i, f in enumerate(found):
+        styles = _inherited_styles(f.start, injected)
+        paras_xml = render_blocks(
+            slot_contents[f.slot.id],
+            styles=styles,
+            start_id=_SLOT_ID_BASE + i * _SLOT_ID_STRIDE,
+        )
+        elements = _fragment_to_elements(paras_xml)
+
+        children = list(f.parent)
+        i0 = children.index(f.start)
+        if f.end is not None:  # 수정 구간: 시작~끝 문단을 통째로 제거
+            i1 = children.index(f.end)
+            for el in children[i0:i1 + 1]:
+                f.parent.remove(el)
+        else:
+            f.parent.remove(f.start)
+        for offset, el in enumerate(elements):
+            f.parent.insert(i0 + offset, el)
+
+    replacements: dict[str, bytes] = {"Contents/header.xml": new_header.encode("utf-8")}
+    for entry, root in trees.items():
+        replacements[entry] = _serialize_section(root)
+
+    _rewrite_zip(template_path, out_path, replacements)
+    validate_hwpx(out_path)
