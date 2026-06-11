@@ -11,7 +11,7 @@ from web.codex_runner import build_prompt, run_codex, CodexError
 def test_build_prompt_includes_request_and_instructions():
     prompt = build_prompt("학과별 입학정원 추이를 표로 정리해줘")
     assert "학과별 입학정원 추이를 표로 정리해줘" in prompt
-    assert "converted/" in prompt
+    assert "document.md" in prompt
     assert "Markdown" in prompt
 
 
@@ -68,3 +68,24 @@ def test_run_codex_raises_on_nonzero_exit(tmp_path: Path):
             on_event=lambda e: None,
             codex_cmd=codex_cmd,
         )
+
+
+def test_build_prompt_report_uses_report_instruction():
+    from web.codex_runner import SYSTEM_INSTRUCTION, build_prompt
+
+    prompt = build_prompt("정리해줘", output_type="report")
+    assert SYSTEM_INSTRUCTION in prompt
+    assert "정리해줘" in prompt
+
+
+def test_build_prompt_merge_uses_merge_instruction():
+    from web.codex_runner import MERGE_INSTRUCTION, build_prompt
+
+    prompt = build_prompt("하나로 취합해줘", output_type="merge")
+    assert MERGE_INSTRUCTION in prompt
+    assert "취합" in prompt
+
+
+def test_build_prompt_default_is_report():
+    from web.codex_runner import SYSTEM_INSTRUCTION, build_prompt
+    assert SYSTEM_INSTRUCTION in build_prompt("x")
