@@ -18,6 +18,18 @@ class HwpxError(RuntimeError):
 
 MIMETYPE = b"application/hwp+zip"
 
+REQUIRED_ENTRIES = (
+    "mimetype",
+    "version.xml",
+    "META-INF/container.xml",
+    "META-INF/manifest.xml",
+    "Contents/content.hpf",
+    "Contents/header.xml",
+    "Contents/section0.xml",
+    "settings.xml",
+)
+
+# 주의: tagetApplication 은 OWPML 스펙 원문의 오탈자를 그대로 따른 것 — 고치면 안 됨.
 _VERSION_XML = (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
     '<hv:HCFVersion xmlns:hv="http://www.hancom.co.kr/hwpml/2011/version" '
@@ -244,12 +256,11 @@ def validate_hwpx(path: Path) -> None:
     if not zipfile.is_zipfile(path):
         raise HwpxError(f"{path.name}: zip 형식이 아닙니다.")
     with zipfile.ZipFile(path) as zf:
+        infos = zf.infolist()
+        if not infos or infos[0].filename != "mimetype" or infos[0].compress_type != zipfile.ZIP_STORED:
+            raise HwpxError("mimetype 은 첫 엔트리·비압축(STORED)이어야 합니다.")
         names = zf.namelist()
-        required = [
-            "mimetype", "version.xml", "META-INF/container.xml",
-            "Contents/content.hpf", "Contents/header.xml", "Contents/section0.xml",
-        ]
-        missing = [n for n in required if n not in names]
+        missing = [n for n in REQUIRED_ENTRIES if n not in names]
         if missing:
             raise HwpxError(f"필수 엔트리 누락: {', '.join(missing)}")
         if zf.read("mimetype") != MIMETYPE:

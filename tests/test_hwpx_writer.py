@@ -2,18 +2,7 @@ import zipfile
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from web.hwpx_writer import package_hwpx, validate_hwpx
-
-REQUIRED_ENTRIES = [
-    "mimetype",
-    "version.xml",
-    "META-INF/container.xml",
-    "META-INF/manifest.xml",
-    "Contents/content.hpf",
-    "Contents/header.xml",
-    "Contents/section0.xml",
-    "settings.xml",
-]
+from web.hwpx_writer import REQUIRED_ENTRIES, package_hwpx, validate_hwpx
 
 
 def _empty_doc(tmp_path: Path) -> Path:
