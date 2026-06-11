@@ -6,7 +6,7 @@ from web.worker import run_job
 
 def test_run_job_success_flow(tmp_path: Path):
     mgr = JobManager(base_dir=tmp_path)
-    job = mgr.create(upload_filename="a.hwp", file_bytes=b"x", request_text="정리")
+    job = mgr.create(uploads=[("a.hwp", b"x")], request_text="정리")
 
     def fake_convert(upload_path, converted_root):
         doc_dir = Path(converted_root) / "doc"
@@ -31,7 +31,7 @@ def test_run_job_success_flow(tmp_path: Path):
 
 def test_run_job_marks_failed_on_convert_error(tmp_path: Path):
     mgr = JobManager(base_dir=tmp_path)
-    job = mgr.create(upload_filename="a.hwp", file_bytes=b"x", request_text="r")
+    job = mgr.create(uploads=[("a.hwp", b"x")], request_text="r")
 
     def boom_convert(upload_path, converted_root):
         raise RuntimeError("kordoc 폭발")
@@ -48,7 +48,7 @@ def test_run_job_marks_failed_on_convert_error(tmp_path: Path):
 
 def test_run_job_marks_failed_on_codex_error(tmp_path: Path):
     mgr = JobManager(base_dir=tmp_path)
-    job = mgr.create(upload_filename="a.hwp", file_bytes=b"x", request_text="r")
+    job = mgr.create(uploads=[("a.hwp", b"x")], request_text="r")
 
     def fake_convert(upload_path, converted_root):
         doc_dir = Path(converted_root) / "doc"

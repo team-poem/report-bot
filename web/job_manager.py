@@ -15,6 +15,7 @@ class JobState(str, Enum):
     QUEUED = "queued"
     CONVERTING = "converting"
     ANALYZING = "analyzing"
+    GENERATING = "generating"
     DONE = "done"
     FAILED = "failed"
 
@@ -23,8 +24,9 @@ class JobState(str, Enum):
 class Job:
     id: str
     dir: Path
-    upload_path: Path
+    upload_paths: list[Path]
     request_text: str
+    output_type: str = "report"
     state: JobState = JobState.QUEUED
     step: str = ""
     error: str = ""
@@ -44,6 +46,10 @@ class Job:
     def log_path(self) -> Path:
         return self.dir / "codex_log.jsonl"
 
+    @property
+    def result_path(self) -> Path:
+        return self.dir / "result.hwpx"
+
 
 def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
@@ -55,21 +61,30 @@ class JobManager:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self._jobs: dict[str, Job] = {}
 
-    def create(self, upload_filename: str, file_bytes: bytes, request_text: str) -> Job:
+    def create(
+        self,
+        uploads: list[tuple[str, bytes]],
+        request_text: str,
+        output_type: str = "report",
+    ) -> Job:
         job_id = uuid.uuid4().hex[:12]
         job_dir = self.base_dir / job_id
         (job_dir / "upload").mkdir(parents=True, exist_ok=True)
 
-        upload_path = job_dir / "upload" / upload_filename
-        upload_path.write_bytes(file_bytes)
+        upload_paths: list[Path] = []
+        for filename, file_bytes in uploads:
+            upload_path = job_dir / "upload" / filename
+            upload_path.write_bytes(file_bytes)
+            upload_paths.append(upload_path)
         (job_dir / "request.txt").write_text(request_text, encoding="utf-8")
 
         now = _now()
         job = Job(
             id=job_id,
             dir=job_dir,
-            upload_path=upload_path,
+            upload_paths=upload_paths,
             request_text=request_text,
+            output_type=output_type,
             created_at=now,
             updated_at=now,
         )
@@ -101,6 +116,7 @@ class JobManager:
             "state": job.state.value,
             "step": job.step,
             "error": job.error,
+            "output_type": job.output_type,
             "created_at": job.created_at,
             "updated_at": job.updated_at,
         }
