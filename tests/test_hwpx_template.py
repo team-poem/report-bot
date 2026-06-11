@@ -150,3 +150,26 @@ def test_scan_sections_ordered_numerically(tmp_path: Path):
         zout.writestr("Contents/section10.xml", section_with("{{추가: 열}}\n"))
     slots = scan_placeholders(out)
     assert [s.instruction for s in slots] == ["", "둘", "열"]
+
+
+def test_inject_styles_appends_defs_and_returns_ids(tmp_path: Path):
+    from web.hwpx_template import _inject_styles
+
+    t = make_template(tmp_path, "{{본문}}\n")
+    with zipfile.ZipFile(t) as zf:
+        header = zf.read("Contents/header.xml").decode("utf-8")
+
+    new_header, ids = _inject_styles(header)
+    # 스켈레톤은 charPr 0~6, borderFill 1~2 → 주입 후 7~13, 3
+    assert ids.normal == 7 and ids.bold == 8 and ids.h3 == 13
+    assert ids.table_border_fill == 3
+    assert f'<hh:charPr id="{ids.h1}"' in new_header
+    assert f'<hh:borderFill id="3"' in new_header
+    # itemCnt 갱신: 7 → 14, 2 → 3
+    assert 'itemCnt="14"' in new_header
+    assert '<hh:borderFills itemCnt="3"' in new_header
+    # 기존 정의는 그대로
+    assert '<hh:charPr id="0"' in new_header
+    # XML 정합성 유지
+    from xml.etree import ElementTree as ET
+    ET.fromstring(new_header)
