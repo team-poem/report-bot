@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -25,13 +26,55 @@ MERGE_INSTRUCTION = (
 )
 
 
+TEMPLATE_OUTPUT_SPEC = (
+    "출력 형식: 아래 모든 슬롯에 대해, 반드시 다음 형식의 블록만 출력하라.\n"
+    "===SLOT: <슬롯ID>===\n"
+    "(해당 슬롯에 들어갈 한국어 Markdown 내용)\n"
+    "===END===\n"
+    "모든 슬롯을 빠짐없이 채우고, 블록 밖에는 어떤 텍스트도 쓰지 마라."
+)
+
+
 class CodexError(RuntimeError):
     pass
 
 
-def build_prompt(request_text: str, output_type: str = "report") -> str:
+class SlotOutputError(RuntimeError):
+    pass
+
+
+def build_prompt(
+    request_text: str,
+    output_type: str = "report",
+    template_md: str | None = None,
+    slots: list | None = None,
+) -> str:
     instruction = MERGE_INSTRUCTION if output_type == "merge" else SYSTEM_INSTRUCTION
-    return f"{instruction}\n\n[담당자 요청]\n{request_text}\n"
+    parts = [instruction]
+    if slots:
+        parts.append("[양식 문서 구조]\n" + (template_md or "(양식 변환 결과 없음)"))
+        lines = []
+        for s in slots:
+            line = f"- {s.id}: {s.instruction or '맥락에 맞는 내용 작성'}"
+            if s.kind == "수정" and s.original_text:
+                line += f"\n  [기존 내용]\n  {s.original_text}"
+            lines.append(line)
+        parts.append("[채울 슬롯]\n" + "\n".join(lines))
+        parts.append(TEMPLATE_OUTPUT_SPEC)
+    parts.append(f"[담당자 요청]\n{request_text}")
+    return "\n\n".join(parts) + "\n"
+
+
+_SLOT_OUTPUT_RE = re.compile(r"===SLOT:\s*(.+?)\s*===\n(.*?)===END===", re.S)
+
+
+def parse_slot_output(md_text: str, expected_ids: list[str]) -> dict[str, str]:
+    """codex 의 슬롯 구조 출력을 {슬롯ID: 마크다운} 으로 파싱하고 누락을 검증한다."""
+    contents = {sid.strip(): body.strip() for sid, body in _SLOT_OUTPUT_RE.findall(md_text)}
+    missing = [sid for sid in expected_ids if sid not in contents]
+    if missing:
+        raise SlotOutputError(f"채워지지 않은 슬롯: {', '.join(missing)}")
+    return contents
 
 
 def run_codex(
@@ -40,11 +83,13 @@ def run_codex(
     report_path: Path,
     on_event: Callable[[dict], None],
     output_type: str = "report",
+    template_md: str | None = None,
+    slots: list | None = None,
     codex_cmd: str = "codex",
     timeout: int = 1800,
 ) -> None:
     """codex exec 를 실행해 report_path 에 리포트를 쓰고, JSONL 이벤트를 on_event 로 흘린다."""
-    prompt = build_prompt(request_text, output_type)
+    prompt = build_prompt(request_text, output_type, template_md=template_md, slots=slots)
     cmd = [
         *shlex.split(codex_cmd),
         "exec",
