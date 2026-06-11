@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree as ET
 from xml.sax.saxutils import escape
@@ -278,24 +279,43 @@ def validate_hwpx(path: Path) -> None:
 
 # ------------------------------------------------------------- block renderer
 
-_HEADING_CHAR_PR = {1: 4, 2: 5, 3: 6}
+@dataclass(frozen=True)
+class StyleIds:
+    """렌더러가 참조하는 header.xml 정의 ID 묶음. 기본값은 내장 스켈레톤."""
+    normal: int = 0
+    bold: int = 1
+    italic: int = 2
+    bold_italic: int = 3
+    h1: int = 4
+    h2: int = 5
+    h3: int = 6
+    table_border_fill: int = 2
+    para_pr: int = 0
+    style: int = 0
 
 
-def _span_char_pr(span: Span) -> int:
+DEFAULT_STYLE_IDS = StyleIds()
+
+
+def _span_char_pr(span: Span, styles: StyleIds) -> int:
     if span.bold and span.italic:
-        return 3
+        return styles.bold_italic
     if span.bold:
-        return 1
+        return styles.bold
     if span.italic:
-        return 2
-    return 0
+        return styles.italic
+    return styles.normal
+
+
+def _heading_char_pr(level: int, styles: StyleIds) -> int:
+    return {1: styles.h1, 2: styles.h2, 3: styles.h3}[level]
 
 
 class _IdGen:
-    """hp:p id 는 문서 안에서 유일하기만 하면 된다. 1은 secPr 문단이 쓴다."""
+    """hp:p id 는 문서 안에서 유일하기만 하면 된다. 스켈레톤에서 1은 secPr 문단."""
 
-    def __init__(self) -> None:
-        self._next = 2
+    def __init__(self, start: int = 2) -> None:
+        self._next = start
 
     def take(self) -> int:
         value = self._next
@@ -303,33 +323,35 @@ class _IdGen:
         return value
 
 
-def _runs_xml(spans: list[Span], char_pr_override: int | None = None) -> str:
+def _runs_xml(spans: list[Span], styles: StyleIds,
+              char_pr_override: int | None = None) -> str:
     runs = []
     for span in spans:
-        pr = char_pr_override if char_pr_override is not None else _span_char_pr(span)
+        pr = char_pr_override if char_pr_override is not None else _span_char_pr(span, styles)
         runs.append(f'<hp:run charPrIDRef="{pr}"><hp:t>{escape(span.text)}</hp:t></hp:run>')
     return "".join(runs)
 
 
-def _para_xml(ids: _IdGen, spans: list[Span], char_pr_override: int | None = None) -> str:
+def _para_xml(ids: _IdGen, spans: list[Span], styles: StyleIds,
+              char_pr_override: int | None = None) -> str:
     return (
-        f'<hp:p id="{ids.take()}" paraPrIDRef="0" styleIDRef="0" '
-        'pageBreak="0" columnBreak="0" merged="0">'
-        + _runs_xml(spans, char_pr_override)
+        f'<hp:p id="{ids.take()}" paraPrIDRef="{styles.para_pr}" '
+        f'styleIDRef="{styles.style}" pageBreak="0" columnBreak="0" merged="0">'
+        + _runs_xml(spans, styles, char_pr_override)
         + "</hp:p>"
     )
 
 
 def _cell_xml(ids: _IdGen, spans: list[Span], col: int, row: int,
-              col_width: int, bold_header: bool) -> str:
-    override = 1 if bold_header else None
+              col_width: int, bold_header: bool, styles: StyleIds) -> str:
+    override = styles.bold if bold_header else None
     return (
         '<hp:tc name="" header="0" hasMargin="0" protect="0" editable="0" '
-        'dirty="0" borderFillIDRef="2">'
+        f'dirty="0" borderFillIDRef="{styles.table_border_fill}">'
         '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" '
         'vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0" '
         'textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">'
-        + _para_xml(ids, spans, override)
+        + _para_xml(ids, spans, styles, override)
         + "</hp:subList>"
         f'<hp:cellAddr colAddr="{col}" rowAddr="{row}"/>'
         '<hp:cellSpan colSpan="1" rowSpan="1"/>'
@@ -339,7 +361,7 @@ def _cell_xml(ids: _IdGen, spans: list[Span], col: int, row: int,
     )
 
 
-def _table_xml(ids: _IdGen, table: Table) -> str:
+def _table_xml(ids: _IdGen, table: Table, styles: StyleIds) -> str:
     if not table.rows:
         return ""
     row_cnt = len(table.rows)
@@ -351,13 +373,13 @@ def _table_xml(ids: _IdGen, table: Table) -> str:
         tcs = []
         for c in range(col_cnt):
             spans = row[c] if c < len(row) else [Span("")]
-            tcs.append(_cell_xml(ids, spans, c, r, col_width, bold_header))
+            tcs.append(_cell_xml(ids, spans, c, r, col_width, bold_header, styles))
         trs.append("<hp:tr>" + "".join(tcs) + "</hp:tr>")
     tbl = (
         f'<hp:tbl id="{ids.take()}" zOrder="0" numberingType="TABLE" '
         'textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" '
         f'pageBreak="CELL" repeatHeader="1" rowCnt="{row_cnt}" colCnt="{col_cnt}" '
-        'cellSpacing="0" borderFillIDRef="2" noAdjust="0">'
+        f'cellSpacing="0" borderFillIDRef="{styles.table_border_fill}" noAdjust="0">'
         f'<hp:sz width="{PAGE_TEXT_WIDTH}" widthRelTo="ABSOLUTE" '
         f'height="{row_cnt * 1000}" heightRelTo="ABSOLUTE" protect="0"/>'
         '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" '
@@ -370,28 +392,31 @@ def _table_xml(ids: _IdGen, table: Table) -> str:
     )
     # 표는 문단의 run 안에 들어가는 인라인 객체다 (treatAsChar)
     return (
-        f'<hp:p id="{ids.take()}" paraPrIDRef="0" styleIDRef="0" '
-        'pageBreak="0" columnBreak="0" merged="0">'
-        f'<hp:run charPrIDRef="0">{tbl}<hp:t/></hp:run></hp:p>'
+        f'<hp:p id="{ids.take()}" paraPrIDRef="{styles.para_pr}" '
+        f'styleIDRef="{styles.style}" pageBreak="0" columnBreak="0" merged="0">'
+        f'<hp:run charPrIDRef="{styles.normal}">{tbl}<hp:t/></hp:run></hp:p>'
     )
 
 
-def _blocks_to_paras(blocks: list[Block]) -> list[str]:
-    ids = _IdGen()
+def render_blocks(md_text: str, styles: StyleIds = DEFAULT_STYLE_IDS,
+                  start_id: int = 2) -> list[str]:
+    """마크다운을 hp:p XML 조각 목록으로 렌더한다. hwpx_template 이 재사용한다."""
+    ids = _IdGen(start_id)
     paras: list[str] = []
-    for block in blocks:
+    for block in parse_blocks(md_text):
         if isinstance(block, Heading):
-            paras.append(_para_xml(ids, block.spans, _HEADING_CHAR_PR[block.level]))
+            paras.append(_para_xml(ids, block.spans, styles,
+                                   _heading_char_pr(block.level, styles)))
         elif isinstance(block, Paragraph):
-            paras.append(_para_xml(ids, block.spans))
+            paras.append(_para_xml(ids, block.spans, styles))
         elif isinstance(block, ListBlock):
             for n, item in enumerate(block.items, start=1):
                 prefix = f"{n}. " if block.ordered else "• "
-                # Merge prefix into the first span so "• 텍스트" is contiguous in one run
+                # 접두사를 첫 span 에 병합해 "• 텍스트" 가 한 run 에 이어지게 한다
                 first = Span(prefix + item[0].text, bold=item[0].bold, italic=item[0].italic)
-                paras.append(_para_xml(ids, [first, *item[1:]]))
+                paras.append(_para_xml(ids, [first, *item[1:]], styles))
         elif isinstance(block, Table):
-            paras.append(_table_xml(ids, block))
+            paras.append(_table_xml(ids, block, styles))
     return paras
 
 
@@ -401,7 +426,7 @@ def markdown_to_hwpx(md_text: str, out_path: Path) -> None:
     """마크다운을 기본 서식 HWPX 로 변환해 out_path 에 쓴다."""
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_bytes(package_hwpx(_blocks_to_paras(parse_blocks(md_text))))
+    out_path.write_bytes(package_hwpx(render_blocks(md_text)))
 
 
 def write_hwpx(report_path: Path, result_path: Path) -> None:
