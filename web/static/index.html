@@ -31,6 +31,14 @@
       분석 리포트 — 문서들을 분석한 리포트를 받습니다</label>
     <label style="font-weight:400"><input type="radio" name="output_type" value="merge" />
       취합 문서 — 여러 문서의 내용을 하나의 새 문서로 취합합니다</label>
+    <label>양식 파일 (선택, .hwpx)
+      <input type="file" id="template" accept=".hwpx" />
+    </label>
+    <small style="display:block;color:#666;margin-top:0.25rem">
+      양식 안에 <code>{{본문}}</code>, <code>{{추가: 지시}}</code>,
+      <code>{{수정시작: 지시}}</code> ~ <code>{{수정끝}}</code> 자리표시자를
+      한 줄에 하나씩 넣어 두면 그 위치에 생성 내용이 채워집니다.
+    </small>
     <label>요청 내용
       <textarea id="request_text" placeholder="예: 부서별 보고서를 하나로 취합해줘"></textarea>
     </label>
@@ -83,6 +91,8 @@
       for (const f of document.getElementById('files').files) fd.append('files', f);
       fd.append('request_text', document.getElementById('request_text').value);
       fd.append('output_type', document.querySelector('input[name="output_type"]:checked').value);
+      const tpl = document.getElementById('template').files[0];
+      if (tpl) fd.append('template', tpl);
 
       const resp = await fetch('/jobs', { method: 'POST', body: fd });
       if (!resp.ok) {
