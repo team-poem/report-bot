@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import os
 from pathlib import Path
@@ -9,13 +10,14 @@ from pathlib import Path
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
-from web.codex_runner import run_codex
+from web.codex_runner import parse_slot_output, run_codex
+from web.hwpx_template import TemplateError, fill_template, scan_placeholders
 from web.hwpx_writer import write_hwpx
 from web.job_manager import JobManager
 from web.job_runner import JobRunner
 from web.pipeline_runner import SUPPORTED_EXTENSIONS, convert_many
 from web.report_renderer import render_html
-from web.worker import run_job
+from web.worker import TemplateFns, run_job
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -66,6 +68,9 @@ def reset_runner() -> None:
     _runner = None
 
 
+TEMPLATE_FNS = TemplateFns(scan=scan_placeholders, parse_slots=parse_slot_output, fill=fill_template)
+
+
 @app.on_event("shutdown")
 def _shutdown_runner() -> None:
     if _runner is not None:
@@ -82,6 +87,7 @@ async def create_job(
     files: list[UploadFile] = File(...),
     request_text: str = Form(...),
     output_type: str = Form("report"),
+    template: UploadFile | None = File(None),
 ) -> dict:
     if output_type not in ("report", "merge"):
         raise HTTPException(status_code=400, detail="output_type 은 report 또는 merge 여야 합니다.")
@@ -106,10 +112,26 @@ async def create_job(
         seen.add(safe_name)
         uploads.append((safe_name, await f.read()))
 
+    template_tuple: tuple[str, bytes] | None = None
+    if template is not None and template.filename:
+        # 파일명 경로 탈출 방지: 마지막 경로 요소만 사용
+        t_name = Path(template.filename).name or "template.hwpx"
+        if not t_name.lower().endswith(".hwpx"):
+            raise HTTPException(status_code=400, detail="양식은 .hwpx 파일이어야 합니다.")
+        t_bytes = await template.read()
+        try:
+            scan_placeholders(io.BytesIO(t_bytes))
+        except TemplateError as exc:
+            raise HTTPException(status_code=400, detail=f"양식 검증 실패: {exc}")
+        template_tuple = (t_name, t_bytes)
+
     job = get_manager().create(
-        uploads=uploads, request_text=request_text, output_type=output_type
+        uploads=uploads, request_text=request_text,
+        output_type=output_type, template=template_tuple,
     )
-    get_runner().submit(run_job, job, get_manager(), convert_many, run_codex, write_hwpx)
+    get_runner().submit(
+        run_job, job, get_manager(), convert_many, run_codex, write_hwpx, TEMPLATE_FNS
+    )
     return {"job_id": job.id}
 
 

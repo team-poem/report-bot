@@ -73,3 +73,26 @@ def test_create_with_multiple_uploads_and_output_type(tmp_path):
 def test_generating_state_exists():
     from web.job_manager import JobState
     assert JobState.GENERATING.value == "generating"
+
+
+def test_create_with_template_saves_file(tmp_path):
+    from web.job_manager import JobManager
+
+    mgr = JobManager(base_dir=tmp_path)
+    job = mgr.create(
+        uploads=[("a.hwp", b"x")],
+        request_text="r",
+        output_type="report",
+        template=("양식.hwpx", b"PK-bytes"),
+    )
+    assert job.template_path is not None
+    assert job.template_path.read_bytes() == b"PK-bytes"
+    assert job.template_path.parent == job.dir / "template"
+
+
+def test_create_without_template_defaults_none(tmp_path):
+    from web.job_manager import JobManager
+
+    mgr = JobManager(base_dir=tmp_path)
+    job = mgr.create(uploads=[("a.hwp", b"x")], request_text="r")
+    assert job.template_path is None

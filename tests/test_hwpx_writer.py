@@ -116,3 +116,36 @@ def test_roundtrip_generated_hwpx_through_kordoc(tmp_path: Path):
     assert completed.returncode == 0, completed.stderr
     assert "라운드트립 제목" in completed.stdout
     assert "본문 텍스트 보존 확인" in completed.stdout
+
+
+def test_render_blocks_with_custom_style_ids():
+    from web.hwpx_writer import StyleIds, render_blocks
+
+    styles = StyleIds(normal=10, bold=11, italic=12, bold_italic=13,
+                      h1=14, h2=15, h3=16, table_border_fill=9,
+                      para_pr=5, style=7)
+    paras = render_blocks(
+        "# 제목\n본문 **굵게**\n\n| a |\n| --- |\n| 1 |\n",
+        styles=styles, start_id=500,
+    )
+    xml = "".join(paras)
+    assert 'charPrIDRef="14"' in xml      # h1 → 커스텀 id
+    assert 'charPrIDRef="11"' in xml      # 굵게 → 커스텀 id
+    assert 'charPrIDRef="10"' in xml      # 일반 → 커스텀 id
+    assert 'paraPrIDRef="5"' in xml and 'styleIDRef="7"' in xml
+    assert 'borderFillIDRef="9"' in xml   # 표 테두리 → 커스텀 id
+    assert 'id="500"' in xml              # hp:p id 시작값
+    assert 'paraPrIDRef="0"' not in xml   # 기본 id 가 새어 나오지 않음
+
+
+def test_render_blocks_default_matches_markdown_to_hwpx(tmp_path: Path):
+    """기본 StyleIds 렌더가 기존 markdown_to_hwpx 출력과 동일해야 한다(회귀 방지)."""
+    from web.hwpx_writer import DEFAULT_STYLE_IDS, markdown_to_hwpx, render_blocks
+
+    md = "# 제목\n본문\n\n- 항목\n"
+    out = tmp_path / "d.hwpx"
+    markdown_to_hwpx(md, out)
+    with zipfile.ZipFile(out) as zf:
+        section = zf.read("Contents/section0.xml").decode("utf-8")
+    for para in render_blocks(md, styles=DEFAULT_STYLE_IDS, start_id=2):
+        assert para in section

@@ -89,3 +89,53 @@ def test_build_prompt_merge_uses_merge_instruction():
 def test_build_prompt_default_is_report():
     from web.codex_runner import SYSTEM_INSTRUCTION, build_prompt
     assert SYSTEM_INSTRUCTION in build_prompt("x")
+
+
+def _slots():
+    from web.hwpx_template import Slot
+    return [
+        Slot(id="본문-1", kind="본문", instruction=""),
+        Slot(id="수정-2", kind="수정", instruction="최신 수치로", original_text="작년 내용"),
+    ]
+
+
+def test_build_prompt_with_template_lists_slots_and_format():
+    from web.codex_runner import build_prompt
+
+    prompt = build_prompt("갱신해줘", output_type="report",
+                          template_md="# 양식 구조", slots=_slots())
+    assert "# 양식 구조" in prompt
+    assert "본문-1" in prompt and "수정-2" in prompt
+    assert "최신 수치로" in prompt
+    assert "작년 내용" in prompt           # 수정 구간 원문 포함
+    assert "===SLOT:" in prompt            # 출력 형식 명세
+    assert "갱신해줘" in prompt
+
+
+def test_build_prompt_without_slots_unchanged():
+    from web.codex_runner import SYSTEM_INSTRUCTION, build_prompt
+
+    prompt = build_prompt("정리해줘")
+    assert SYSTEM_INSTRUCTION in prompt
+    assert "===SLOT:" not in prompt
+
+
+def test_parse_slot_output_happy_path():
+    from web.codex_runner import parse_slot_output
+
+    md = (
+        "===SLOT: 본문-1===\n# 내용\n본문이다\n===END===\n\n"
+        "===SLOT: 수정-2===\n고친 내용\n===END===\n"
+    )
+    contents = parse_slot_output(md, ["본문-1", "수정-2"])
+    assert contents["본문-1"].startswith("# 내용")
+    assert contents["수정-2"] == "고친 내용"
+
+
+def test_parse_slot_output_missing_slot_raises():
+    import pytest
+    from web.codex_runner import SlotOutputError, parse_slot_output
+
+    md = "===SLOT: 본문-1===\nx\n===END===\n"
+    with pytest.raises(SlotOutputError, match="수정-2"):
+        parse_slot_output(md, ["본문-1", "수정-2"])

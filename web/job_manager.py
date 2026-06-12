@@ -27,6 +27,7 @@ class Job:
     upload_paths: list[Path]
     request_text: str
     output_type: str = "report"
+    template_path: "Path | None" = None
     state: JobState = JobState.QUEUED
     step: str = ""
     error: str = ""
@@ -66,6 +67,7 @@ class JobManager:
         uploads: list[tuple[str, bytes]],
         request_text: str,
         output_type: str = "report",
+        template: "tuple[str, bytes] | None" = None,
     ) -> Job:
         job_id = uuid.uuid4().hex[:12]
         job_dir = self.base_dir / job_id
@@ -78,6 +80,14 @@ class JobManager:
             upload_paths.append(upload_path)
         (job_dir / "request.txt").write_text(request_text, encoding="utf-8")
 
+        template_path: Path | None = None
+        if template is not None:
+            t_name, t_bytes = template
+            template_dir = job_dir / "template"
+            template_dir.mkdir(parents=True, exist_ok=True)
+            template_path = template_dir / t_name
+            template_path.write_bytes(t_bytes)
+
         now = _now()
         job = Job(
             id=job_id,
@@ -85,6 +95,7 @@ class JobManager:
             upload_paths=upload_paths,
             request_text=request_text,
             output_type=output_type,
+            template_path=template_path,
             created_at=now,
             updated_at=now,
         )
