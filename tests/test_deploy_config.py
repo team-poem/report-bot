@@ -92,3 +92,11 @@ def test_reportbot_compose_codex_mount_is_writable_and_sandbox_env():
     assert all(not v.endswith(":ro") for v in codex_mounts)
     env = "\n".join(svc["environment"])
     assert "REPORT_BOT_CODEX_SANDBOX=${REPORT_BOT_CODEX_SANDBOX:-read-only}" in env
+
+
+def test_deploy_readme_covers_codex_setup_and_sandbox_fallback():
+    txt = (REPO / "deploy/README.md").read_text(encoding="utf-8")
+    assert "codex login" in txt
+    assert "@openai/codex" in txt
+    assert "REPORT_BOT_CODEX_SANDBOX" in txt
+    assert "danger-full-access" in txt
