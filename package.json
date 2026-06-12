@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "kordoc": "^3.0.1",
+    "pdfjs-dist": "^4.10.38"
+  }
+}

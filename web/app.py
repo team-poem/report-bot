@@ -6,13 +6,14 @@ import json
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
 from web.codex_runner import run_codex
+from web.hwpx_writer import write_hwpx
 from web.job_manager import JobManager
 from web.job_runner import JobRunner
-from web.pipeline_runner import convert
+from web.pipeline_runner import SUPPORTED_EXTENSIONS, convert_many
 from web.report_renderer import render_html
 from web.worker import run_job
 
@@ -77,18 +78,38 @@ def index() -> HTMLResponse:
 
 
 @app.post("/jobs")
-async def create_job(file: UploadFile, request_text: str = Form(...)) -> dict:
-    manager = get_manager()
-    data = await file.read()
-    # 클라이언트가 보낸 파일명은 신뢰하지 않는다(경로 탈출 방지): 마지막 경로 요소만 사용.
-    safe_name = Path(file.filename or "upload.bin").name or "upload.bin"
-    job = manager.create(
-        upload_filename=safe_name,
-        file_bytes=data,
-        request_text=request_text,
-    )
+async def create_job(
+    files: list[UploadFile] = File(...),
+    request_text: str = Form(...),
+    output_type: str = Form("report"),
+) -> dict:
+    if output_type not in ("report", "merge"):
+        raise HTTPException(status_code=400, detail="output_type 은 report 또는 merge 여야 합니다.")
+    if not files:
+        raise HTTPException(status_code=400, detail="파일을 1개 이상 올려 주세요.")
 
-    get_runner().submit(run_job, job, manager, convert, run_codex)
+    uploads: list[tuple[str, bytes]] = []
+    seen: set[str] = set()
+    for f in files:
+        # 클라이언트가 보낸 파일명은 신뢰하지 않는다(경로 탈출 방지): 마지막 경로 요소만 사용.
+        safe_name = Path(f.filename or "upload.bin").name or "upload.bin"
+        if Path(safe_name).suffix.lower() not in SUPPORTED_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"지원하지 않는 파일 형식입니다: {safe_name}",
+            )
+        stem, suffix = Path(safe_name).stem, Path(safe_name).suffix
+        n = 2
+        while safe_name in seen:
+            safe_name = f"{stem}_{n}{suffix}"
+            n += 1
+        seen.add(safe_name)
+        uploads.append((safe_name, await f.read()))
+
+    job = get_manager().create(
+        uploads=uploads, request_text=request_text, output_type=output_type
+    )
+    get_runner().submit(run_job, job, get_manager(), convert_many, run_codex, write_hwpx)
     return {"job_id": job.id}
 
 
@@ -107,6 +128,15 @@ def get_report(job_id: str) -> HTMLResponse:
         raise HTTPException(status_code=404, detail="리포트가 아직 없습니다.")
     md_text = job.report_path.read_text(encoding="utf-8")
     return HTMLResponse(render_html(md_text))
+
+
+@app.get("/jobs/{job_id}/hwpx")
+def get_hwpx(job_id: str) -> FileResponse:
+    job = get_manager().get(job_id)
+    if job is None or not job.result_path.exists():
+        raise HTTPException(status_code=404, detail="한글 파일이 아직 없습니다.")
+    filename = "취합문서.hwpx" if job.output_type == "merge" else "분석리포트.hwpx"
+    return FileResponse(job.result_path, filename=filename, media_type="application/hwp+zip")
 
 
 @app.get("/jobs/{job_id}/events")

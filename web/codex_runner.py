@@ -8,11 +8,20 @@ from pathlib import Path
 from typing import Callable
 
 SYSTEM_INSTRUCTION = (
-    "너는 `converted/` 폴더에 있는 한글 문서 변환 데이터"
-    "(document.md, facts.json, tables_long.csv, table_*.csv)를 읽고 "
-    "분석 리포트를 작성하는 어시스턴트다. 추측하지 말고 데이터 근거를 표·수치로 제시하라. "
+    "너는 현재 폴더 아래 문서 폴더들(각 폴더의 document.md, facts.json, "
+    "tables_long.csv, table_*.csv)을 읽고 분석 리포트를 작성하는 어시스턴트다. "
+    "문서 폴더가 여러 개면 모두 읽어라. 추측하지 말고 데이터 근거를 표·수치로 제시하라. "
     "근거가 없으면 \"데이터에서 확인 불가\"라고 명시하라. "
     "아래 담당자 요청에 맞춰 한국어 Markdown 리포트를 작성하라."
+)
+
+MERGE_INSTRUCTION = (
+    "너는 현재 폴더 아래 여러 문서 폴더(각 폴더의 document.md, facts.json, "
+    "tables_long.csv, table_*.csv)를 읽고, 여러 문서의 내용을 하나의 새 문서로 "
+    "취합·정리하는 어시스턴트다. 모든 문서 폴더를 빠짐없이 읽어라. "
+    "추측하지 말고 원문 데이터 근거를 표·수치로 제시하고, 근거가 없으면 "
+    "\"데이터에서 확인 불가\"라고 명시하라. "
+    "아래 담당자 요청에 맞춰 취합된 한국어 Markdown 문서를 작성하라."
 )
 
 
@@ -20,8 +29,9 @@ class CodexError(RuntimeError):
     pass
 
 
-def build_prompt(request_text: str) -> str:
-    return f"{SYSTEM_INSTRUCTION}\n\n[담당자 요청]\n{request_text}\n"
+def build_prompt(request_text: str, output_type: str = "report") -> str:
+    instruction = MERGE_INSTRUCTION if output_type == "merge" else SYSTEM_INSTRUCTION
+    return f"{instruction}\n\n[담당자 요청]\n{request_text}\n"
 
 
 def run_codex(
@@ -29,11 +39,12 @@ def run_codex(
     request_text: str,
     report_path: Path,
     on_event: Callable[[dict], None],
+    output_type: str = "report",
     codex_cmd: str = "codex",
     timeout: int = 1800,
 ) -> None:
     """codex exec 를 실행해 report_path 에 리포트를 쓰고, JSONL 이벤트를 on_event 로 흘린다."""
-    prompt = build_prompt(request_text)
+    prompt = build_prompt(request_text, output_type)
     cmd = [
         *shlex.split(codex_cmd),
         "exec",

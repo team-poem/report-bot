@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>한글 문서 분석 리포트</title>
+  <title>한글 문서 분석·취합</title>
   <style>
     body { font-family: -apple-system, "Apple SD Gothic Neo", sans-serif; max-width: 880px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
     h1 { font-size: 1.4rem; }
@@ -19,17 +19,22 @@
   </style>
 </head>
 <body>
-  <h1>한글 문서 분석 리포트</h1>
-  <p>한글/엑셀 파일을 올리고, 원하는 분석을 적으면 리포트를 만들어 드립니다.</p>
+  <h1>한글 문서 분석·취합</h1>
+  <p>한글/엑셀 파일 여러 개를 올리고, 분석 리포트나 취합 문서를 받으세요. 결과는 한글 파일로 내려받을 수 있습니다.</p>
 
   <form id="form">
-    <label>문서 파일
-      <input type="file" id="file" name="file" required />
+    <label>문서 파일 (여러 개 선택 가능)
+      <input type="file" id="files" name="files" multiple required />
     </label>
+    <label>산출물 종류</label>
+    <label style="font-weight:400"><input type="radio" name="output_type" value="report" checked />
+      분석 리포트 — 문서들을 분석한 리포트를 받습니다</label>
+    <label style="font-weight:400"><input type="radio" name="output_type" value="merge" />
+      취합 문서 — 여러 문서의 내용을 하나의 새 문서로 취합합니다</label>
     <label>요청 내용
-      <textarea id="request_text" placeholder="예: 학과별 입학정원 추이를 표로 정리해줘"></textarea>
+      <textarea id="request_text" placeholder="예: 부서별 보고서를 하나로 취합해줘"></textarea>
     </label>
-    <button type="submit">분석 시작</button>
+    <button type="submit">시작</button>
   </form>
 
   <div class="status" id="status"></div>
@@ -75,11 +80,18 @@
       statusEl.textContent = '업로드 중…';
 
       const fd = new FormData();
-      fd.append('file', document.getElementById('file').files[0]);
+      for (const f of document.getElementById('files').files) fd.append('files', f);
       fd.append('request_text', document.getElementById('request_text').value);
+      fd.append('output_type', document.querySelector('input[name="output_type"]:checked').value);
 
       const resp = await fetch('/jobs', { method: 'POST', body: fd });
-      if (!resp.ok) { statusEl.textContent = '업로드 실패'; statusEl.className = 'status err'; return; }
+      if (!resp.ok) {
+        let detail = '업로드 실패';
+        try { detail = (await resp.json()).detail || detail; } catch {}
+        statusEl.textContent = detail;
+        statusEl.className = 'status err';
+        return;
+      }
       const { job_id } = await resp.json();
       statusEl.textContent = '대기 중 — 분석 차례를 기다리는 중…';
 
@@ -106,9 +118,24 @@
     async function loadReport(jobId) {
       const statusResp = await fetch(`/jobs/${jobId}`);
       const status = await statusResp.json();
-      if (status.state !== 'done') return;
+      const isDone = status.state === 'done';
+      if (!isDone && status.state !== 'failed') return;
+
       const url = `/jobs/${jobId}/report`;
+      if (!isDone) {
+        // 실패한 잡: 리포트가 이미 만들어져 있으면(HWPX 생성 실패 등) 미리보기만 제공
+        // FastAPI 버전에 따라 HEAD 가 405 를 반환할 수 있으므로 GET 으로 확인
+        const probe = await fetch(url);
+        if (!probe.ok) return;
+      }
       reportEl.innerHTML = '';
+      if (isDone) {
+        const hwpx = document.createElement('a');
+        hwpx.href = `/jobs/${jobId}/hwpx`;
+        hwpx.textContent = '⬇ 한글 파일(.hwpx) 다운로드';
+        reportEl.appendChild(hwpx);
+        reportEl.appendChild(document.createElement('br'));
+      }
       const dl = document.createElement('a');
       dl.href = url;
       dl.textContent = '⬇ report.html 다운로드';

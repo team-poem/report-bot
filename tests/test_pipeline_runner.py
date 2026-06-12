@@ -37,3 +37,40 @@ def test_convert_raises_when_no_markdown(tmp_path: Path, monkeypatch):
 
     with pytest.raises(PipelineError):
         convert(upload, converted_root)
+
+
+def test_convert_many_converts_each_and_returns_doc_dirs(tmp_path, monkeypatch):
+    import web.pipeline_runner as pr
+
+    calls = []
+
+    def fake_convert(upload_path, converted_root):
+        calls.append(upload_path)
+        doc_dir = Path(converted_root) / Path(upload_path).stem
+        doc_dir.mkdir(parents=True, exist_ok=True)
+        return doc_dir
+
+    monkeypatch.setattr(pr, "convert", fake_convert)
+
+    a, b = tmp_path / "a.hwp", tmp_path / "b.hwp"
+    a.write_bytes(b"x"); b.write_bytes(b"y")
+    doc_dirs = pr.convert_many([a, b], tmp_path / "converted")
+
+    assert calls == [a, b]
+    assert [d.name for d in doc_dirs] == ["a", "b"]
+
+
+def test_convert_many_failure_includes_filename(tmp_path, monkeypatch):
+    import pytest
+    import web.pipeline_runner as pr
+
+    def boom(upload_path, converted_root):
+        raise RuntimeError("kordoc 폭발")
+
+    monkeypatch.setattr(pr, "convert", boom)
+    f = tmp_path / "요람.hwp"
+    f.write_bytes(b"x")
+
+    with pytest.raises(pr.PipelineError) as exc_info:
+        pr.convert_many([f], tmp_path / "converted")
+    assert "요람.hwp" in str(exc_info.value)
