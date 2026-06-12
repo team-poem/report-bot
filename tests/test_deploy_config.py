@@ -72,3 +72,23 @@ def test_deploy_readme_has_guide_and_templates():
     assert "loadbalancer.server.port=8787" in txt
     assert "lms-bot.${PUBLIC_IP}.sslip.io" in txt
     assert "loadbalancer.server.port=8080" in txt
+
+
+def test_dockerfile_installs_codex_and_npm_deps():
+    txt = (REPO / "Dockerfile").read_text(encoding="utf-8")
+    assert "npm install -g @openai/codex" in txt
+    assert "COPY package.json package-lock.json" in txt
+    assert "npm ci" in txt
+    # 레이어 캐싱: npm ci 가 소스 COPY 보다 앞서야 한다
+    assert txt.index("npm ci") < txt.index("COPY scripts")
+
+
+def test_reportbot_compose_codex_mount_is_writable_and_sandbox_env():
+    c = _load_yaml("docker-compose.yml")
+    svc = c["services"]["report-bot"]
+    codex_mounts = [v for v in svc["volumes"] if "/.codex" in v]
+    assert codex_mounts, ".codex 마운트가 없습니다"
+    # OAuth 토큰 갱신이 써야 하므로 ro 금지
+    assert all(not v.endswith(":ro") for v in codex_mounts)
+    env = "\n".join(svc["environment"])
+    assert "REPORT_BOT_CODEX_SANDBOX=${REPORT_BOT_CODEX_SANDBOX:-read-only}" in env

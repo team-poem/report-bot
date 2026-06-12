@@ -3,10 +3,11 @@ services:
     build: .
     volumes:
       - ./jobs:/app/jobs                       # 산출물 영속
-      - ${HOME}/.codex:/root/.codex:ro         # codex 인증(후속: 이미지에 codex 설치 시)
+      - ${HOME}/.codex:/root/.codex            # codex 인증 (OAuth 토큰 갱신 때문에 rw)
     environment:
       - CODEX_HOME=/root/.codex
       - REPORT_BOT_MAX_CONCURRENCY=3
+      - REPORT_BOT_CODEX_SANDBOX=${REPORT_BOT_CODEX_SANDBOX:-read-only}
     restart: unless-stopped
     labels:
       - traefik.enable=true
