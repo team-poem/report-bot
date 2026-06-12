@@ -23,6 +23,12 @@
    ```bash
    mkdir -p deploy/traefik/acme
    ```
+8. **Codex 인증(1회)** — 분석 단계가 ChatGPT 계정 인증을 사용한다. 맥미니 호스트에서:
+   ```bash
+   npm install -g @openai/codex
+   codex login          # 브라우저 로그인. ~/.codex 에 인증이 저장된다
+   ```
+   컨테이너는 이 폴더를 읽기·쓰기로 마운트한다(토큰 자동 갱신).
 
 ## 2. 띄우는 순서
 
@@ -39,6 +45,24 @@ docker compose up -d
 
 접속 확인: 브라우저에서 `https://report-bot.<공인IP>.sslip.io`
 (예: `https://report-bot.1.2.3.4.sslip.io`). 첫 접속 시 인증서 발급에 수십 초 걸릴 수 있다.
+
+## 2.5 재배포 (코드 갱신 시)
+
+```bash
+git pull
+docker compose build
+docker compose up -d
+```
+
+배포 후 검증:
+```bash
+# 컨테이너 안에서 codex 가 인증·실행되는지
+docker compose exec report-bot codex exec "1+1을 계산해" -s read-only --skip-git-repo-check
+```
+
+**분석 단계가 "샌드박스" 관련 에러로 실패하면** (컨테이너 커널이 Landlock 미지원):
+`.env` 에 `REPORT_BOT_CODEX_SANDBOX=danger-full-access` 를 추가하고
+`docker compose up -d` 로 재기동한다. 컨테이너 자체가 격리 경계라 허용 가능한 설정이다.
 
 ## 3. 새 서비스 추가하는 법 (학칙 챗봇 / lms-chatbot)
 

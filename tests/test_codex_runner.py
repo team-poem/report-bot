@@ -139,3 +139,17 @@ def test_parse_slot_output_missing_slot_raises():
     md = "===SLOT: 본문-1===\nx\n===END===\n"
     with pytest.raises(SlotOutputError, match="수정-2"):
         parse_slot_output(md, ["본문-1", "수정-2"])
+
+
+def test_sandbox_mode_defaults_to_read_only(monkeypatch):
+    from web.codex_runner import _sandbox_mode
+
+    monkeypatch.delenv("REPORT_BOT_CODEX_SANDBOX", raising=False)
+    assert _sandbox_mode() == "read-only"
+
+
+def test_sandbox_mode_overridden_by_env(monkeypatch):
+    from web.codex_runner import _sandbox_mode
+
+    monkeypatch.setenv("REPORT_BOT_CODEX_SANDBOX", "danger-full-access")
+    assert _sandbox_mode() == "danger-full-access"

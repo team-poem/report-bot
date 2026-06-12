@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -33,6 +34,12 @@ TEMPLATE_OUTPUT_SPEC = (
     "===END===\n"
     "모든 슬롯을 빠짐없이 채우고, 블록 밖에는 어떤 텍스트도 쓰지 마라."
 )
+
+
+def _sandbox_mode() -> str:
+    """codex -s 값. 컨테이너에서 Landlock 미지원이면 compose 에서
+    REPORT_BOT_CODEX_SANDBOX=danger-full-access 로 전환(컨테이너가 격리 경계)."""
+    return os.environ.get("REPORT_BOT_CODEX_SANDBOX", "read-only")
 
 
 class CodexError(RuntimeError):
@@ -95,7 +102,7 @@ def run_codex(
         "exec",
         prompt,
         "-C", str(converted_dir),
-        "-s", "read-only",
+        "-s", _sandbox_mode(),
         "--skip-git-repo-check",
         "--json",
         "-o", str(report_path),
